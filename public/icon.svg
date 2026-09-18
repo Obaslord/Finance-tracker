@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#041e17" />
+      <stop offset="50%" stop-color="#0b2921" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#10b981" flood-opacity="0.35" />
+    </filter>
+  </defs>
+  
+  <!-- Outer Rounded Container -->
+  <rect width="512" height="512" rx="110" fill="url(#bgGrad)" />
+  
+  <!-- Subtle Border Glow -->
+  <rect x="12" y="12" width="488" height="488" rx="98" fill="none" stroke="#10b981" stroke-width="4" stroke-opacity="0.3" />
+  
+  <!-- Vault / Shield Background -->
+  <g filter="url(#glow)">
+    <circle cx="256" cy="256" r="180" fill="#04271e" stroke="url(#shieldGrad)" stroke-width="8" />
+  </g>
+  
+  <!-- Stylized Naira Symbol & Growth Elements -->
+  <g fill="#34d399">
+    <!-- Left Column -->
+    <rect x="175" y="150" width="26" height="212" rx="8" />
+    
+    <!-- Right Column -->
+    <rect x="311" y="150" width="26" height="212" rx="8" />
+    
+    <!-- Diagonal Connecting Bar -->
+    <path d="M 175 160 L 325 352 L 337 352 L 187 160 Z" />
+    
+    <!-- Upper Horizontal Crossbar -->
+    <rect x="135" y="222" width="242" height="22" rx="6" fill="#6ee7b7" />
+    
+    <!-- Lower Horizontal Crossbar -->
+    <rect x="135" y="268" width="242" height="22" rx="6" fill="#6ee7b7" />
+  </g>
+  
+  <!-- Little Sparkle / Star Indicator -->
+  <circle cx="365" cy="155" r="12" fill="#fbbf24" />
+</svg>

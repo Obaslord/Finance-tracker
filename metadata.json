@@ -1,0 +1,8 @@
+{
+  "name": "Obaslord Finance Tracker",
+  "description": "Personal finance and cash flow tracker for variable per-job income, milestone payouts, envelope budgeting, and tax lock.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
