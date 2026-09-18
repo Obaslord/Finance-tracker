@@ -1,7 +1,11 @@
 import {
+  AlertTriangle,
+  Check,
   Download,
+  EyeOff,
   Moon,
   RotateCcw,
+  ShieldAlert,
   Sliders,
   Sparkles,
   Sun,
@@ -11,7 +15,6 @@ import {
 import React, { useState } from 'react';
 import { AppTheme, Envelope } from '../types';
 import { formatNaira } from '../utils/formatters';
-import { PWAInstallButton } from './PWAInstallButton';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -40,8 +43,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'targets'>('general');
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmLoadDemo, setConfirmLoadDemo] = useState(false);
+  const [isDemoHidden, setIsDemoHidden] = useState(() => {
+    return localStorage.getItem('obaslord_hide_demo_button') === 'true';
+  });
 
   if (!isOpen) return null;
+
+  const handleToggleHideDemo = () => {
+    const nextVal = !isDemoHidden;
+    setIsDemoHidden(nextVal);
+    localStorage.setItem('obaslord_hide_demo_button', nextVal ? 'true' : 'false');
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
@@ -79,7 +92,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            Theme & Data Baseline
+            Theme &amp; Data Controls
           </button>
           <button
             onClick={() => setActiveSettingsTab('targets')}
@@ -134,7 +147,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 rounded-xl space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  Data Reset & ₦0 Baseline
+                  Data Reset &amp; ₦0 Baseline
                 </h4>
                 <span className="text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold px-2 py-0.5 rounded">
                   Fresh Start
@@ -145,22 +158,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </p>
 
               {confirmReset ? (
-                <div className="pt-2 flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      onResetToZeroBaseline();
-                      setConfirmReset(false);
-                    }}
-                    className="flex-1 py-1.5 px-3 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs"
-                  >
-                    Confirm: Reset to ₦0 Cash
-                  </button>
-                  <button
-                    onClick={() => setConfirmReset(false)}
-                    className="py-1.5 px-3 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg"
-                  >
-                    Cancel
-                  </button>
+                <div className="pt-2 p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl space-y-2">
+                  <p className="text-xs font-semibold text-rose-900 dark:text-rose-200">
+                    Are you sure? This will wipe your active balances and logs.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        onResetToZeroBaseline();
+                        setConfirmReset(false);
+                      }}
+                      className="flex-1 py-1.5 px-3 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs"
+                    >
+                      Confirm: Reset to ₦0 Cash
+                    </button>
+                    <button
+                      onClick={() => setConfirmReset(false)}
+                      className="py-1.5 px-3 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <button
@@ -173,37 +191,93 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
 
-            {/* Demo Exploration */}
-            <div className="p-4 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-xl flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  Sample Freelance Scenario
-                </h4>
-                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
-                  Load demo gigs and milestone payouts to inspect visual calculations
+            {/* Load Demo State with Strict Protection or Hidden */}
+            {!isDemoHidden ? (
+              <div className="p-4 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    Load Sample Freelance Demo
+                  </h4>
+                  <button
+                    onClick={handleToggleHideDemo}
+                    className="text-[10px] text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline flex items-center gap-1"
+                    title="Hide this button so you never accidentally click it"
+                  >
+                    <EyeOff className="w-3 h-3" />
+                    Hide Permanently
+                  </button>
+                </div>
+                <p className="text-[11px] text-amber-800/80 dark:text-amber-300">
+                  Protected by confirmation so your personal logs are never accidentally cleared.
                 </p>
+
+                {confirmLoadDemo ? (
+                  <div className="p-3 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 rounded-xl space-y-2 animate-in fade-in duration-150">
+                    <div className="flex items-start gap-2 text-rose-600 dark:text-rose-400">
+                      <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                      <p className="text-xs font-bold">
+                        Warning: This will overwrite your active envelopes, contracts, and expense history with demo data!
+                      </p>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      If you have real records, click Cancel now or backup your data first.
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => {
+                          onLoadDemoState();
+                          setConfirmLoadDemo(false);
+                          onClose();
+                        }}
+                        className="py-1.5 px-3 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs"
+                      >
+                        Yes, Replace with Demo
+                      </button>
+                      <button
+                        onClick={() => setConfirmLoadDemo(false)}
+                        className="py-1.5 px-3 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 rounded-lg"
+                      >
+                        Cancel (Keep My Data Safe)
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setConfirmLoadDemo(true)}
+                      className="px-3 py-1.5 text-xs font-semibold text-amber-800 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/60 hover:bg-amber-200 dark:hover:bg-amber-800 rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Load Demo Data...</span>
+                    </button>
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => {
-                  onLoadDemoState();
-                  onClose();
-                }}
-                className="px-3 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/60 hover:bg-blue-200 dark:hover:bg-blue-800 rounded-lg transition-colors"
-              >
-                Load Demo
-              </button>
-            </div>
+            ) : (
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between">
+                <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  &quot;Load Demo&quot; button is hidden to safeguard your logs.
+                </span>
+                <button
+                  onClick={handleToggleHideDemo}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Unhide
+                </button>
+              </div>
+            )}
 
             {/* Data Export & Backup */}
             <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl flex items-center justify-between">
               <div>
                 <h4 className="text-xs font-bold text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
                   <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                  Export &amp; Backup Financial Data
+                  Export &amp; Local Auto-Backup
                 </h4>
                 <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300 mt-0.5">
-                  Download CSV spreadsheets or create / restore complete JSON backups
+                  Automated weekly backups to local path + CSV spreadsheet reports
                 </p>
               </div>
               <button
@@ -213,17 +287,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }}
                 className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-colors shrink-0"
               >
-                Export / Backup
+                Backups &amp; Export
               </button>
             </div>
 
-            {/* Android / PWA Mobile App Download */}
-            <div className="pt-1">
-              <PWAInstallButton variant="settings" />
-            </div>
-
             {/* Survival Runway Baseline Link */}
-            <div className="pt-2">
+            <div className="pt-1">
               <button
                 onClick={() => {
                   onClose();
@@ -239,47 +308,66 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Tab 2: Envelope Monthly Targets */}
         {activeSettingsTab === 'targets' && (
-          <div className="mt-4 space-y-3 max-h-80 overflow-y-auto pr-1">
+          <div className="mt-4 space-y-4">
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Customize your standard monthly spending envelope targets:
+              Customize the monthly funding requirement for each envelope. These targets determine how incoming job payments are split.
             </p>
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              {envelopes.map((envelope) => (
+                <div
+                  key={envelope.id}
+                  className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0"
+                      style={{ backgroundColor: envelope.color }}
+                    />
+                    <div>
+                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block">
+                        {envelope.name}
+                      </span>
+                      {envelope.isEssentialForSurvival && (
+                        <span className="text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-1 py-0.2 rounded font-medium">
+                          Survival Essential
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-            {envelopes.map((env) => (
-              <div
-                key={env.id}
-                className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40"
-              >
-                <div>
-                  <p className="text-xs font-bold text-slate-900 dark:text-slate-100">{env.name}</p>
-                  <p className="text-[10px] text-slate-400">
-                    Current Balance: {formatNaira(env.currentBalance)}
-                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-400">₦</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={envelope.monthlyTarget}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        onUpdateTarget(envelope.id, isNaN(val) ? 0 : Math.max(0, val));
+                      }}
+                      className="w-24 text-xs font-bold text-right px-2 py-1 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
+              ))}
+            </div>
 
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-slate-400 font-semibold">₦</span>
-                  <input
-                    type="number"
-                    step="1000"
-                    min="0"
-                    value={env.monthlyTarget}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value) || 0;
-                      onUpdateTarget(env.id, val);
-                    }}
-                    className="w-24 px-2 py-1 text-xs font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-right text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-            ))}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold text-slate-900 dark:text-slate-100">
+              <span>Total Monthly Target Requirement:</span>
+              <span>
+                {formatNaira(envelopes.reduce((sum, e) => sum + e.monthlyTarget, 0))}
+              </span>
+            </div>
           </div>
         )}
 
         {/* Footer */}
-        <div className="mt-5 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+        <div className="mt-6 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
           <button
+            type="button"
             onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 rounded-xl transition-colors"
+            className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
           >
             Done
           </button>

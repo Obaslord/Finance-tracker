@@ -1,22 +1,29 @@
 import {
   AlertCircle,
   Briefcase,
+  Calendar,
   CheckCircle2,
+  Clock,
   Database,
   Download,
   FileSpreadsheet,
-  FileText,
+  Gift,
+  HardDrive,
+  History,
   Landmark,
   Receipt,
   RotateCcw,
+  ShieldCheck,
   Sparkles,
   Upload,
   Wallet,
   X,
 } from 'lucide-react';
 import React, { useRef, useState } from 'react';
-import { AppState } from '../types';
+import { AppState, BackupSnapshot } from '../types';
+import { checkAndRunWeeklyAutoBackup } from '../utils/autoBackup';
 import {
+  downloadFile,
   exportComprehensiveFinancialReport,
   exportEnvelopesToCsv,
   exportExpensesToCsv,
@@ -40,7 +47,7 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
   appState,
   onRestoreState,
 }) => {
-  const [activeTab, setActiveTab] = useState<'csv' | 'json'>('csv');
+  const [activeTab, setActiveTab] = useState<'csv' | 'autobackup' | 'json'>('autobackup');
   const [downloadSuccessMessage, setDownloadSuccessMessage] = useState<string | null>(null);
 
   // Import state
@@ -48,6 +55,9 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
   const [importedStateCandidate, setImportedStateCandidate] = useState<AppState | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
+
+  // Snapshot restore confirmation
+  const [selectedSnapshot, setSelectedSnapshot] = useState<BackupSnapshot | null>(null);
 
   if (!isOpen) return null;
 
@@ -76,6 +86,21 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
     showSuccess('Jobs Pipeline CSV downloaded successfully!');
   };
 
+  const handleExportGifts = () => {
+    const headers = ['Date', 'Sender / Giver', 'Amount (NGN)', 'Occasion', 'Note'];
+    const rows = (appState.giftLogs || []).map((g) => [
+      `"${g.date}"`,
+      `"${g.sender.replace(/"/g, '""')}"`,
+      g.amount,
+      `"${(g.occasion || '').replace(/"/g, '""')}"`,
+      `"${(g.note || '').replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    const timestamp = new Date().toISOString().split('T')[0];
+    downloadFile(csvContent, `obaslord-monetary-gifts-${timestamp}.csv`);
+    showSuccess('Monetary Gifts Inflow CSV downloaded successfully!');
+  };
+
   const handleExportFullReport = () => {
     exportComprehensiveFinancialReport(appState);
     showSuccess('Full Financial Executive Summary downloaded successfully!');
@@ -83,7 +108,23 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
 
   const handleExportJsonBackup = () => {
     exportFullAppStateToJson(appState);
-    showSuccess('Full JSON backup file downloaded successfully!');
+    showSuccess('Full JSON backup file downloaded successfully to your local path!');
+  };
+
+  // Run auto-backup manual trigger now
+  const handleTriggerBackupNow = () => {
+    const result = checkAndRunWeeklyAutoBackup(appState, true);
+    if (result.triggered && result.backupDate && result.updatedSnapshots) {
+      onRestoreState({
+        ...appState,
+        autoBackupSettings: {
+          ...(appState.autoBackupSettings || { enabled: true, frequencyDays: 7, autoSaveToDownloads: true }),
+          lastBackupDate: result.backupDate,
+        },
+        backupSnapshots: result.updatedSnapshots,
+      });
+      showSuccess('Weekly backup completed & saved to your local downloads path!');
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -104,7 +145,7 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
           setImportError(result.error || 'Invalid backup structure.');
           setImportedStateCandidate(null);
         }
-      } catch (err: any) {
+      } catch {
         setImportError('Failed to read file as JSON. Please ensure it is a valid backup.');
         setImportedStateCandidate(null);
       }
@@ -122,6 +163,42 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
     }, 1500);
   };
 
+  const handleRestoreSnapshot = (snap: BackupSnapshot) => {
+    onRestoreState(snap.state);
+    showSuccess(`Restored snapshot from ${new Date(snap.date).toLocaleDateString()}!`);
+    setSelectedSnapshot(null);
+  };
+
+  const autoSettings = appState.autoBackupSettings || {
+    enabled: true,
+    frequencyDays: 7,
+    autoSaveToDownloads: true,
+  };
+
+  const lastBackupLabel = autoSettings.lastBackupDate
+    ? new Date(autoSettings.lastBackupDate).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : 'Not yet recorded (Will run automatically)';
+
+  // Calculate next backup date
+  const nextBackupLabel = autoSettings.lastBackupDate
+    ? new Date(
+        new Date(autoSettings.lastBackupDate).getTime() +
+          (autoSettings.frequencyDays || 7) * 24 * 60 * 60 * 1000
+      ).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : 'Scheduled this week';
+
+  const snapshots = appState.backupSnapshots || [];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
       <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 my-8 transition-colors">
@@ -129,14 +206,14 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-              <Download className="w-5 h-5" />
+              <HardDrive className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Export &amp; Backup Data
+                Data Backups &amp; Reports
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Download spreadsheet reports or create complete data backups
+                Automatic weekly local backups, spreadsheet exports, and restore tools
               </p>
             </div>
           </div>
@@ -149,53 +226,176 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex items-center gap-2 mt-4 border-b border-slate-100 dark:border-slate-800 pb-2.5">
+        <div className="flex items-center gap-2 mt-4 border-b border-slate-100 dark:border-slate-800 pb-2.5 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('autobackup')}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'autobackup'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+            <span>Weekly Auto-Backup</span>
+          </button>
           <button
             onClick={() => setActiveTab('csv')}
-            className={`text-xs font-semibold px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'csv'
                 ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <FileSpreadsheet className="w-4 h-4" />
+            <FileSpreadsheet className="w-4 h-4 text-blue-500" />
             <span>CSV Spreadsheets</span>
           </button>
           <button
             onClick={() => setActiveTab('json')}
-            className={`text-xs font-semibold px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'json'
                 ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <Database className="w-4 h-4" />
-            <span>Full JSON Backup &amp; Restore</span>
+            <Database className="w-4 h-4 text-purple-500" />
+            <span>Manual Backup &amp; Restore</span>
           </button>
         </div>
 
         {/* Notification Banner */}
         {downloadSuccessMessage && (
-          <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+          <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2 animate-in fade-in duration-150">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>{downloadSuccessMessage}</span>
           </div>
         )}
 
-        {/* TAB 1: CSV SPREADSHEETS */}
-        {activeTab === 'csv' && (
-          <div className="mt-4 space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-            {/* Executive Full Report */}
-            <div className="p-4 bg-gradient-to-r from-blue-50/70 to-indigo-50/70 dark:from-blue-950/30 dark:to-indigo-950/30 border border-blue-200/80 dark:border-blue-800/60 rounded-xl flex items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    Comprehensive Financial Report
-                  </h4>
+        {/* TAB 1: WEEKLY AUTO-BACKUP */}
+        {activeTab === 'autobackup' && (
+          <div className="mt-4 space-y-4">
+            {/* Status Card */}
+            <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-900/50 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Automated Weekly Local Backup
+                    </h4>
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      Status: Active (Every 7 Days)
+                    </span>
+                  </div>
                 </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
-                  Full executive summary combining liquidity, 10% tax vault, gross inflows, and envelope allocations into one report.
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200">
+                  ON
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                The application automatically generates a local snapshot and triggers a JSON download to your computer/phone local path every week. Your freelance logs are always safeguarded offline.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-emerald-200/60 dark:border-emerald-900/40 text-xs">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-medium block">Last Backup Ran:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    {lastBackupLabel}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-medium block">Next Scheduled Backup:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                    {nextBackupLabel}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleTriggerBackupNow}
+                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Run Weekly Backup Now (Save to Local Path)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Rolling Snapshots List */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5 text-slate-500" />
+                  Recent Rolling Local Snapshots
+                </h4>
+                <span className="text-[11px] text-slate-400">
+                  {snapshots.length} saved
+                </span>
+              </div>
+
+              {snapshots.length === 0 ? (
+                <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                  No automated snapshots recorded yet. Click &quot;Run Weekly Backup Now&quot; above to create your first one.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {snapshots.map((snap) => (
+                    <div
+                      key={snap.id}
+                      className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <p className="font-semibold text-slate-900 dark:text-slate-100">
+                          {snap.description}
+                        </p>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(snap.date).toLocaleString()} • {snap.state?.envelopes?.length || 0} envelopes • {snap.state?.jobs?.length || 0} jobs
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleRestoreSnapshot(snap)}
+                          className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900 rounded-lg transition-colors flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Restore</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            exportFullAppStateToJson(snap.state);
+                            showSuccess('Snapshot file downloaded!');
+                          }}
+                          className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                          title="Download this snapshot file"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: CSV SPREADSHEETS */}
+        {activeTab === 'csv' && (
+          <div className="mt-4 space-y-3">
+            {/* Full Report */}
+            <div className="p-3.5 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-xl flex items-center justify-between gap-4">
+              <div>
+                <h4 className="text-xs font-bold text-blue-950 dark:text-blue-200">
+                  Comprehensive Financial Summary (.txt / .csv)
+                </h4>
+                <p className="text-[11px] text-blue-800/80 dark:text-blue-300 mt-0.5">
+                  Complete audit report with runway days, envelopes, tax vault balance, and receipts.
                 </p>
               </div>
               <button
@@ -204,6 +404,31 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Export Report</span>
+              </button>
+            </div>
+
+            {/* Monetary Gifts CSV (Requirement 5) */}
+            <div className="p-3.5 bg-rose-50/40 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 rounded-xl flex items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <Gift className="w-4 h-4 text-rose-500" />
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                    Monetary Gifts &amp; Goodwill Inflow
+                  </h4>
+                  <span className="text-[10px] bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-300 font-semibold px-1.5 py-0.2 rounded">
+                    {(appState.giftLogs || []).length} gifts
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Audit trail of cash gifts received from friends, clients, and family tracked as monthly inflow.
+                </p>
+              </div>
+              <button
+                onClick={handleExportGifts}
+                className="shrink-0 px-3 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-200 bg-white dark:bg-slate-800 border border-rose-300 dark:border-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors flex items-center gap-1"
+              >
+                <Download className="w-3.5 h-3.5 text-rose-500" />
+                <span>Gifts CSV</span>
               </button>
             </div>
 
@@ -309,7 +534,7 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
           </div>
         )}
 
-        {/* TAB 2: JSON BACKUP & RESTORE */}
+        {/* TAB 3: JSON BACKUP & RESTORE */}
         {activeTab === 'json' && (
           <div className="mt-4 space-y-4">
             {/* Export JSON Backup */}
@@ -332,7 +557,7 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
                   className="px-4 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 rounded-xl shadow-xs transition-colors flex items-center gap-2"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Download .json Backup</span>
+                  <span>Download .json Backup to Local Path</span>
                 </button>
               </div>
             </div>

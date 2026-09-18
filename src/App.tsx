@@ -6,12 +6,14 @@
 import {
   Coins,
   Download,
+  Gift,
   History,
   Moon,
   Plus,
   Settings,
   Sun,
   TrendingDown,
+  Wallet,
   Zap,
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
@@ -19,11 +21,11 @@ import { CashFlowVisualizer } from './components/CashFlowVisualizer';
 import { EnvelopesSection } from './components/EnvelopesSection';
 import { ExpenseHistoryModal } from './components/ExpenseHistoryModal';
 import { ExportDataModal } from './components/ExportDataModal';
+import { GiftsSection } from './components/GiftsSection';
 import { JobBoard } from './components/JobBoard';
 import { LowBalanceAlert } from './components/LowBalanceAlert';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PaymentDistributorModal } from './components/PaymentDistributorModal';
-import { PWAInstallButton } from './components/PWAInstallButton';
 import { QuickSpendModal } from './components/QuickSpendModal';
 import { RunwayCard } from './components/RunwayCard';
 import { SettingsModal } from './components/SettingsModal';
@@ -31,7 +33,19 @@ import { SpendingTrendVisualizer } from './components/SpendingTrendVisualizer';
 import { SurvivalConfigModal } from './components/SurvivalConfigModal';
 import { TaxAndReceiptsSection } from './components/TaxAndReceiptsSection';
 import { INITIAL_STATE, SAMPLE_DEMO_STATE } from './data/initialData';
-import { AppState, AppTheme, ExpenseRecord, Job, JobStatus, Milestone, PaymentReceipt, SavingsGoal } from './types';
+import {
+  AppState,
+  AppTheme,
+  Envelope,
+  ExpenseRecord,
+  GiftLog,
+  Job,
+  JobStatus,
+  Milestone,
+  PaymentReceipt,
+  SavingsGoal,
+} from './types';
+import { checkAndRunWeeklyAutoBackup } from './utils/autoBackup';
 import { formatNaira } from './utils/formatters';
 
 const STORAGE_KEY = 'obaslord_finance_tracker_state_v2';
@@ -42,38 +56,65 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Ensure theme is set
         if (!parsed.theme) {
           parsed.theme = 'light';
         }
+        if (!parsed.giftLogs) {
+          parsed.giftLogs = [];
+        }
+        if (!parsed.autoBackupSettings) {
+          parsed.autoBackupSettings = {
+            enabled: true,
+            frequencyDays: 7,
+            autoSaveToDownloads: true,
+          };
+        }
+        if (!parsed.backupSnapshots) {
+          parsed.backupSnapshots = [];
+        }
         return parsed;
       }
-    } catch {
-      // fallback to initial
+    } catch (e) {
+      console.error('Failed to parse saved state from local storage', e);
     }
     return INITIAL_STATE;
   });
 
-  // Sync state to local storage
+  // Keep state synced to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {
-      console.error('Failed to save state to local storage', e);
+      console.error('Failed to persist app state', e);
     }
   }, [state]);
 
-  // Apply dark mode class to document element
+  // Apply dark / light theme to document class
   useEffect(() => {
-    const isDark = state.theme === 'dark';
-    if (isDark) {
+    if (state.theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
   }, [state.theme]);
 
-  // Modal states
+  // Automated Weekly Local Backup Check on App Mount
+  useEffect(() => {
+    const backupResult = checkAndRunWeeklyAutoBackup(state);
+    if (backupResult.triggered && backupResult.backupDate && backupResult.updatedSnapshots) {
+      setState((prev) => ({
+        ...prev,
+        autoBackupSettings: {
+          ...(prev.autoBackupSettings || { enabled: true, frequencyDays: 7, autoSaveToDownloads: true }),
+          lastBackupDate: backupResult.backupDate,
+        },
+        backupSnapshots: backupResult.updatedSnapshots,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Payment distributor modal state (triggered when milestone or job is paid)
   const [distributorModalData, setDistributorModalData] = useState<{
     job: Job;
     milestone?: Milestone;
@@ -85,8 +126,10 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
-  // Active view tab: 'overview' | 'jobs' | 'envelopes' | 'visualizer' | 'trends' | 'tax'
-  const [activeTab, setActiveTab] = useState<'overview' | 'jobs' | 'envelopes' | 'visualizer' | 'trends' | 'tax'>('overview');
+  // Active view tab
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'jobs' | 'envelopes' | 'gifts' | 'visualizer' | 'trends' | 'tax'
+  >('overview');
 
   // Calculate pending pipeline
   const pendingPipelineAmount = state.jobs.reduce((sum, job) => {
@@ -110,6 +153,12 @@ export default function App() {
     .filter((e) => e.isUnplanned)
     .reduce((sum, e) => sum + e.amount, 0);
 
+  // Monthly gifts calculation (Requirement 5)
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const currentMonthGiftsTotal = (state.giftLogs || [])
+    .filter((g) => g.date.startsWith(currentMonthKey))
+    .reduce((sum, g) => sum + g.amount, 0);
+
   // Theme switcher
   const handleToggleTheme = (newTheme: AppTheme) => {
     setState((prev) => ({
@@ -131,18 +180,17 @@ export default function App() {
     }));
   };
 
-  // Payment initiate
+  // Payment initiate handler (Opens PaymentDistributorModal)
   const handleReceivePaymentInitiate = (job: Job, milestone?: Milestone) => {
     setDistributorModalData({ job, milestone });
   };
 
-  // Payment confirm & distribution
+  // Payment confirmation handler
   const handleConfirmPayout = ({
     jobId,
     milestoneId,
     grossAmount,
     taxAmount,
-    netAmount,
     allocations,
     bufferAmount,
   }: {
@@ -154,49 +202,45 @@ export default function App() {
     allocations: Record<string, number>;
     bufferAmount: number;
   }) => {
+    const netAmount = grossAmount - taxAmount;
+
     setState((prev) => {
-      // 1. Mark job / milestone as paid
-      const updatedJobs = prev.jobs.map((job) => {
-        if (job.id !== jobId) return job;
+      // 1. Mark milestone / job as paid
+      const updatedJobs = prev.jobs.map((j) => {
+        if (j.id !== jobId) return j;
 
-        let updatedMilestones = [...job.milestones];
         if (milestoneId) {
-          updatedMilestones = updatedMilestones.map((m) =>
-            m.id === milestoneId
-              ? { ...m, isPaid: true, paidAt: new Date().toISOString() }
-              : m
+          const updatedMilestones = j.milestones.map((m) =>
+            m.id === milestoneId ? { ...m, isPaid: true } : m
           );
+          const allPaid = updatedMilestones.every((m) => m.isPaid);
+          return {
+            ...j,
+            milestones: updatedMilestones,
+            status: allPaid ? ('paid' as JobStatus) : ('in_progress' as JobStatus),
+          };
         } else {
-          updatedMilestones = updatedMilestones.map((m) => ({
-            ...m,
-            isPaid: true,
-            paidAt: new Date().toISOString(),
-          }));
+          return {
+            ...j,
+            status: 'paid' as JobStatus,
+            milestones: j.milestones.map((m) => ({ ...m, isPaid: true })),
+          };
         }
-
-        const allPaid = updatedMilestones.every((m) => m.isPaid);
-
-        return {
-          ...job,
-          status: allPaid ? ('completed' as JobStatus) : job.status,
-          milestones: updatedMilestones,
-          completedAt: allPaid ? new Date().toISOString() : job.completedAt,
-        };
       });
 
-      // 2. Add tax amount to tax vault
+      // 2. Increment tax vault (10%)
       const updatedTax = prev.taxReserve + taxAmount;
 
-      // 3. Update envelope balances with allocated amounts
+      // 3. Fund each envelope
       const updatedEnvelopes = prev.envelopes.map((env) => {
-        const added = allocations[env.id] || 0;
+        const allocated = allocations[env.id] || 0;
         return {
           ...env,
-          currentBalance: env.currentBalance + added,
+          currentBalance: env.currentBalance + allocated,
         };
       });
 
-      // 4. Add leftover unallocated cash to survival buffer
+      // 4. Update unallocated buffer
       const updatedBuffer = prev.survivalBufferCash + bufferAmount;
 
       // 5. Create immutable receipt
@@ -302,24 +346,21 @@ export default function App() {
       let buffer = prev.survivalBufferCash;
       let envelopes = [...prev.envelopes];
 
-      // Deduct from source
       if (sourceId === 'survival_buffer') {
-        if (buffer < amount) return prev;
-        buffer -= amount;
+        buffer = Math.max(0, buffer - amount);
       } else {
-        const src = envelopes.find((e) => e.id === sourceId);
-        if (!src || src.currentBalance < amount) return prev;
-        envelopes = envelopes.map((e) =>
-          e.id === sourceId ? { ...e, currentBalance: e.currentBalance - amount } : e
+        envelopes = envelopes.map((env) =>
+          env.id === sourceId
+            ? { ...env, currentBalance: Math.max(0, env.currentBalance - amount) }
+            : env
         );
       }
 
-      // Add to target
       if (targetId === 'survival_buffer') {
         buffer += amount;
       } else {
-        envelopes = envelopes.map((e) =>
-          e.id === targetId ? { ...e, currentBalance: e.currentBalance + amount } : e
+        envelopes = envelopes.map((env) =>
+          env.id === targetId ? { ...env, currentBalance: env.currentBalance + amount } : env
         );
       }
 
@@ -331,21 +372,102 @@ export default function App() {
     });
   };
 
+  // Adjust monthly target for an envelope
   const handleAdjustTarget = (envelopeId: string, newTarget: number) => {
     setState((prev) => ({
       ...prev,
-      envelopes: prev.envelopes.map((e) =>
-        e.id === envelopeId ? { ...e, monthlyTarget: newTarget } : e
+      envelopes: prev.envelopes.map((env) =>
+        env.id === envelopeId ? { ...env, monthlyTarget: newTarget } : env
       ),
     }));
   };
 
+  // Update or delete savings goal for an envelope
   const handleUpdateSavingsGoal = (envelopeId: string, goal: SavingsGoal | undefined) => {
     setState((prev) => ({
       ...prev,
-      envelopes: prev.envelopes.map((e) =>
-        e.id === envelopeId ? { ...e, savingsGoal: goal } : e
+      envelopes: prev.envelopes.map((env) =>
+        env.id === envelopeId ? { ...env, savingsGoal: goal } : env
       ),
+    }));
+  };
+
+  // FULL ENVELOPE ACCESS: Add new envelope (Requirement 1 & 4)
+  const handleAddEnvelope = (envelopeData: Omit<Envelope, 'id'> & { id?: string }) => {
+    const newEnv: Envelope = {
+      ...envelopeData,
+      id: envelopeData.id || `env-${Date.now()}`,
+      currentBalance: envelopeData.currentBalance || 0,
+    };
+    setState((prev) => ({
+      ...prev,
+      envelopes: [...prev.envelopes, newEnv],
+    }));
+  };
+
+  // FULL ENVELOPE ACCESS: Update envelope config (Requirement 1)
+  const handleUpdateEnvelope = (updatedEnvelope: Envelope) => {
+    setState((prev) => ({
+      ...prev,
+      envelopes: prev.envelopes.map((e) => (e.id === updatedEnvelope.id ? updatedEnvelope : e)),
+    }));
+  };
+
+  // FULL ENVELOPE ACCESS: Delete envelope with balance return to buffer
+  const handleDeleteEnvelope = (envelopeId: string) => {
+    setState((prev) => {
+      const target = prev.envelopes.find((e) => e.id === envelopeId);
+      const remainingBalance = target ? target.currentBalance : 0;
+      return {
+        ...prev,
+        survivalBufferCash: prev.survivalBufferCash + remainingBalance,
+        envelopes: prev.envelopes.filter((e) => e.id !== envelopeId),
+      };
+    });
+  };
+
+  // FULL ENVELOPE ACCESS: Direct Deposit or Withdraw from envelope
+  const handleAdjustEnvelopeBalance = (
+    envelopeId: string,
+    amount: number,
+    mode: 'add' | 'subtract'
+  ) => {
+    setState((prev) => ({
+      ...prev,
+      envelopes: prev.envelopes.map((e) => {
+        if (e.id !== envelopeId) return e;
+        const newBal = mode === 'add' ? e.currentBalance + amount : Math.max(0, e.currentBalance - amount);
+        return { ...e, currentBalance: newBal };
+      }),
+    }));
+  };
+
+  // GIFTS TRACKING: Add gift (Requirement 5)
+  const handleAddGift = (giftData: Omit<GiftLog, 'id' | 'createdAt'>) => {
+    const newGift: GiftLog = {
+      ...giftData,
+      id: `gift-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    setState((prev) => ({
+      ...prev,
+      giftLogs: [newGift, ...(prev.giftLogs || [])],
+    }));
+  };
+
+  // GIFTS TRACKING: Update gift
+  const handleUpdateGift = (id: string, updated: Partial<Omit<GiftLog, 'id' | 'createdAt'>>) => {
+    setState((prev) => ({
+      ...prev,
+      giftLogs: (prev.giftLogs || []).map((g) => (g.id === id ? { ...g, ...updated } : g)),
+    }));
+  };
+
+  // GIFTS TRACKING: Delete gift
+  const handleDeleteGift = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      giftLogs: (prev.giftLogs || []).filter((g) => g.id !== id),
     }));
   };
 
@@ -422,9 +544,8 @@ export default function App() {
     setIsSettingsOpen(false);
   };
 
-  const handleRestoreState = (restoredState: AppState) => {
-    setState(restoredState);
-    setIsExportModalOpen(false);
+  const handleRestoreState = (newState: AppState) => {
+    setState(newState);
   };
 
   return (
@@ -477,9 +598,6 @@ export default function App() {
               <span className="hidden lg:inline">Export</span>
             </button>
 
-            {/* PWA / Android Install Button */}
-            <PWAInstallButton variant="nav" />
-
             {/* Theme Toggle Button */}
             <button
               onClick={() => handleToggleTheme(state.theme === 'dark' ? 'light' : 'dark')}
@@ -512,7 +630,7 @@ export default function App() {
             onClick={() => setActiveTab('overview')}
             className={`py-3 border-b-2 transition-colors whitespace-nowrap ${
               activeTab === 'overview'
-                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100'
+                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100 font-bold'
                 : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
@@ -522,7 +640,7 @@ export default function App() {
             onClick={() => setActiveTab('jobs')}
             className={`py-3 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'jobs'
-                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100'
+                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100 font-bold'
                 : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
@@ -535,19 +653,39 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab('envelopes')}
-            className={`py-3 border-b-2 transition-colors whitespace-nowrap ${
+            className={`py-3 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'envelopes'
-                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100'
+                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100 font-bold'
                 : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            Envelopes & Sinking Funds
+            <span>Envelopes &amp; Sinking Funds</span>
+            <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+              {state.envelopes.length}
+            </span>
+          </button>
+          {/* Active Tab: Gifts Session (Requirement 5) */}
+          <button
+            onClick={() => setActiveTab('gifts')}
+            className={`py-3 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+              activeTab === 'gifts'
+                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100 font-bold'
+                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            <Gift className="w-3.5 h-3.5 text-rose-500" />
+            <span>Gifts Inflow</span>
+            {(state.giftLogs || []).length > 0 && (
+              <span className="bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 text-[10px] px-1.5 py-0.2 rounded-full font-bold border border-rose-200 dark:border-rose-800">
+                {(state.giftLogs || []).length}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab('visualizer')}
             className={`py-3 border-b-2 transition-colors whitespace-nowrap ${
               activeTab === 'visualizer'
-                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100'
+                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100 font-bold'
                 : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
@@ -568,7 +706,7 @@ export default function App() {
             onClick={() => setActiveTab('tax')}
             className={`py-3 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'tax'
-                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100'
+                ? 'border-slate-900 dark:border-slate-100 text-slate-900 dark:text-slate-100 font-bold'
                 : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
@@ -593,7 +731,7 @@ export default function App() {
           onNavigateToJobs={() => setActiveTab('jobs')}
         />
 
-        {/* Core Runway & Survival Engine (Shown on overview and envelopes tabs) */}
+        {/* Core Runway & Survival Engine (Shown on overview, envelopes, and jobs tabs) */}
         {(activeTab === 'overview' || activeTab === 'envelopes') && (
           <RunwayCard
             envelopes={state.envelopes}
@@ -615,6 +753,31 @@ export default function App() {
               pendingPipelineAmount={pendingPipelineAmount}
             />
 
+            {/* Monthly Inflow Quick Summary Banner (Contracts vs Gifts) */}
+            {currentMonthGiftsTotal > 0 && (
+              <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/40 rounded-2xl flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500 text-white flex items-center justify-center shrink-0">
+                    <Gift className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Monthly Gift Inflows Tracked: <strong>{formatNaira(currentMonthGiftsTotal)}</strong>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Gifts are tracked purely as personal inflow and remain unallocated to envelopes.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTab('gifts')}
+                  className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline shrink-0"
+                >
+                  View Gift Session &rarr;
+                </button>
+              </div>
+            )}
+
             {/* Active Job Board */}
             <JobBoard
               jobs={state.jobs}
@@ -632,6 +795,10 @@ export default function App() {
               onTransferFunds={handleTransferFunds}
               onAdjustTarget={handleAdjustTarget}
               onUpdateSavingsGoal={handleUpdateSavingsGoal}
+              onAddEnvelope={handleAddEnvelope}
+              onUpdateEnvelope={handleUpdateEnvelope}
+              onDeleteEnvelope={handleDeleteEnvelope}
+              onAdjustBalance={handleAdjustEnvelopeBalance}
             />
 
             {/* Tax Vault & Receipts */}
@@ -650,7 +817,7 @@ export default function App() {
             <div className="bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-900/60 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors">
               <div>
                 <h3 className="text-sm font-bold text-blue-950 dark:text-blue-200">
-                  Irregular Job & Milestone Cash Flow Engine
+                  Irregular Job &amp; Milestone Cash Flow Engine
                 </h3>
                 <p className="text-xs text-blue-800 dark:text-blue-300 mt-0.5">
                   Because you get paid per job without fixed dates, enter each contract or milestone. When money arrives, click &quot;Collect &amp; Allocate&quot; to automatically secure your 10% tax vault and fund your envelopes.
@@ -672,7 +839,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Active Tab: Envelopes */}
+        {/* Active Tab: Envelopes (Full Management) */}
         {activeTab === 'envelopes' && (
           <EnvelopesSection
             envelopes={state.envelopes}
@@ -681,6 +848,20 @@ export default function App() {
             onTransferFunds={handleTransferFunds}
             onAdjustTarget={handleAdjustTarget}
             onUpdateSavingsGoal={handleUpdateSavingsGoal}
+            onAddEnvelope={handleAddEnvelope}
+            onUpdateEnvelope={handleUpdateEnvelope}
+            onDeleteEnvelope={handleDeleteEnvelope}
+            onAdjustBalance={handleAdjustEnvelopeBalance}
+          />
+        )}
+
+        {/* Active Tab: Gifts Inflow Session (Requirement 5) */}
+        {activeTab === 'gifts' && (
+          <GiftsSection
+            giftLogs={state.giftLogs || []}
+            onAddGift={handleAddGift}
+            onUpdateGift={handleUpdateGift}
+            onDeleteGift={handleDeleteGift}
           />
         )}
 

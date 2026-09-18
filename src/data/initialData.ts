@@ -78,6 +78,26 @@ export const DEFAULT_ENVELOPES: Envelope[] = [
     color: '#F59E0B', // Amber
   },
   {
+    id: 'env-toiletries',
+    name: 'Toiletries & Hygiene',
+    monthlyTarget: 15000,
+    currentBalance: 0,
+    category: 'survival',
+    isEssentialForSurvival: true,
+    iconName: 'Sparkles',
+    color: '#14B8A6', // Teal
+  },
+  {
+    id: 'env-online-subs',
+    name: 'Online Subscriptions',
+    monthlyTarget: 10000,
+    currentBalance: 0,
+    category: 'utility',
+    isEssentialForSurvival: false,
+    iconName: 'Tv',
+    color: '#8B5CF6', // Purple
+  },
+  {
     id: 'env-games',
     name: 'Games & Leisure',
     monthlyTarget: 5000,
@@ -96,6 +116,13 @@ export const INITIAL_STATE: AppState = {
   survivalBufferCash: 0,
   expenseHistory: [],
   paymentReceipts: [],
+  giftLogs: [],
+  autoBackupSettings: {
+    enabled: true,
+    frequencyDays: 7,
+    autoSaveToDownloads: true,
+  },
+  backupSnapshots: [],
   theme: 'light',
 };
 

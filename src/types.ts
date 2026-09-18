@@ -69,6 +69,31 @@ export interface PaymentReceipt {
   receivedAt: string;
 }
 
+export interface GiftLog {
+  id: string;
+  sender: string;
+  amount: number;
+  date: string;
+  occasion?: string;
+  note?: string;
+  createdAt: string;
+}
+
+export interface AutoBackupSettings {
+  enabled: boolean;
+  frequencyDays: number; // Default 7 (weekly)
+  lastBackupDate?: string;
+  autoSaveToDownloads: boolean;
+}
+
+export interface BackupSnapshot {
+  id: string;
+  date: string;
+  timestamp: number;
+  description: string;
+  state: AppState;
+}
+
 export interface AppState {
   jobs: Job[];
   envelopes: Envelope[];
@@ -76,5 +101,9 @@ export interface AppState {
   survivalBufferCash: number; // unassigned liquid cash buffer
   expenseHistory: ExpenseRecord[];
   paymentReceipts: PaymentReceipt[];
+  giftLogs?: GiftLog[]; // Logged monetary gifts (not allocated to envelopes, tracked as inflow)
+  autoBackupSettings?: AutoBackupSettings;
+  backupSnapshots?: BackupSnapshot[];
+  hideDemoButton?: boolean;
   theme?: AppTheme;
 }

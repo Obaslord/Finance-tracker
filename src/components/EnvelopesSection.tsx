@@ -1,5 +1,7 @@
 import {
+  ArrowDownLeft,
   ArrowRight,
+  ArrowUpRight,
   Baby,
   Calendar,
   Car,
@@ -10,22 +12,30 @@ import {
   Download,
   Flag,
   Gamepad2,
+  Globe,
+  HeartHandshake,
   Home,
   LucideIcon,
+  Minus,
+  Pencil,
   Plus,
+  ShieldAlert,
   Sparkles,
   Target,
+  Trash2,
   Trophy,
   Tv,
   Utensils,
   Wallet,
   Wifi,
   X,
+  Zap,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Envelope, SavingsGoal } from '../types';
 import { exportEnvelopesToCsv } from '../utils/exportData';
 import { formatNaira, formatPercent } from '../utils/formatters';
+import { EnvelopeEditorModal } from './EnvelopeEditorModal';
 import { SavingsGoalModal } from './SavingsGoalModal';
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -38,15 +48,23 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Car,
   Gamepad2,
   Wallet,
+  Globe,
+  Sparkles,
+  Zap,
+  HeartHandshake,
 };
 
-interface EnvelopesSectionProps {
+export interface EnvelopesSectionProps {
   envelopes: Envelope[];
   survivalBufferCash: number;
   onSpendFromEnvelope: (envelopeId: string, amount: number, note: string) => void;
   onTransferFunds: (sourceId: string, targetId: string, amount: number) => void;
   onAdjustTarget: (envelopeId: string, newTarget: number) => void;
   onUpdateSavingsGoal?: (envelopeId: string, goal: SavingsGoal | undefined) => void;
+  onAddEnvelope: (envelope: Omit<Envelope, 'id'> & { id?: string }) => void;
+  onUpdateEnvelope: (envelope: Envelope) => void;
+  onDeleteEnvelope: (envelopeId: string) => void;
+  onAdjustBalance: (envelopeId: string, amount: number, mode: 'add' | 'subtract') => void;
 }
 
 export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
@@ -56,9 +74,17 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   onTransferFunds,
   onAdjustTarget,
   onUpdateSavingsGoal,
+  onAddEnvelope,
+  onUpdateEnvelope,
+  onDeleteEnvelope,
+  onAdjustBalance,
 }) => {
   // View mode tab: 'all' | 'savings_goals'
   const [viewTab, setViewTab] = useState<'all' | 'savings_goals'>('all');
+
+  // Envelope Editor modal state (Create / Edit)
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editingEnvelope, setEditingEnvelope] = useState<Envelope | null>(null);
 
   // Spend modal state
   const [activeSpendEnvelope, setActiveSpendEnvelope] = useState<Envelope | null>(null);
@@ -70,9 +96,17 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   const [transferTarget, setTransferTarget] = useState<string>('');
   const [transferAmount, setTransferAmount] = useState<string>('');
 
-  // Editing monthly target state
+  // Quick Direct Balance Adjust modal state (Deposit / Withdraw)
+  const [activeAdjustBalanceEnvelope, setActiveAdjustBalanceEnvelope] = useState<Envelope | null>(null);
+  const [adjustBalanceMode, setAdjustBalanceMode] = useState<'add' | 'subtract'>('add');
+  const [adjustBalanceAmount, setAdjustBalanceAmount] = useState<string>('');
+
+  // Inline editing monthly target state
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
   const [tempTarget, setTempTarget] = useState<string>('');
+
+  // Delete confirmation state
+  const [deletingEnvelopeId, setDeletingEnvelopeId] = useState<string | null>(null);
 
   // Savings Goal Modal state
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
@@ -88,33 +122,28 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
     (sum, e) => sum + (e.savingsGoal?.targetAmount || 0),
     0
   );
-  const totalGoalsCurrent = envelopesWithGoals.reduce((sum, e) => sum + e.currentBalance, 0);
+  const totalGoalsCurrent = envelopesWithGoals.reduce(
+    (sum, e) => sum + Math.min(e.currentBalance, e.savingsGoal?.targetAmount || 0),
+    0
+  );
   const overallGoalProgress =
     totalGoalsTarget > 0 ? Math.min(100, Math.round((totalGoalsCurrent / totalGoalsTarget) * 100)) : 0;
   const totalGoalsRemaining = Math.max(0, totalGoalsTarget - totalGoalsCurrent);
 
-  const handleSpendSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeSpendEnvelope) return;
-    const num = parseFloat(spendAmount);
-    if (isNaN(num) || num <= 0) return;
+  const existingCategories = useMemo(() => {
+    return Array.from(new Set(envelopes.map((e) => e.category)));
+  }, [envelopes]);
 
-    onSpendFromEnvelope(activeSpendEnvelope.id, num, spendNote || 'Expense');
-    setActiveSpendEnvelope(null);
-    setSpendAmount('');
-    setSpendNote('');
+  // Open editor for new envelope
+  const handleOpenCreateEnvelope = () => {
+    setEditingEnvelope(null);
+    setIsEditorOpen(true);
   };
 
-  const handleTransferSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeTransferSource || !transferTarget) return;
-    const num = parseFloat(transferAmount);
-    if (isNaN(num) || num <= 0) return;
-
-    onTransferFunds(activeTransferSource, transferTarget, num);
-    setActiveTransferSource(null);
-    setTransferTarget('');
-    setTransferAmount('');
+  // Open editor for editing an existing envelope
+  const handleOpenEditEnvelope = (env: Envelope) => {
+    setEditingEnvelope(env);
+    setIsEditorOpen(true);
   };
 
   const startEditTarget = (envelope: Envelope) => {
@@ -123,11 +152,51 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   };
 
   const saveEditTarget = (envelopeId: string) => {
-    const num = parseFloat(tempTarget);
-    if (!isNaN(num) && num >= 0) {
-      onAdjustTarget(envelopeId, num);
+    const parsed = parseInt(tempTarget, 10);
+    if (!isNaN(parsed) && parsed >= 0) {
+      onAdjustTarget(envelopeId, parsed);
     }
     setEditingTargetId(null);
+  };
+
+  const handleQuickTargetDelta = (envelope: Envelope, delta: number) => {
+    const newTarget = Math.max(0, envelope.monthlyTarget + delta);
+    onAdjustTarget(envelope.id, newTarget);
+  };
+
+  const handleSpendSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSpendEnvelope) return;
+    const amount = parseFloat(spendAmount);
+    if (isNaN(amount) || amount <= 0 || amount > activeSpendEnvelope.currentBalance) return;
+
+    onSpendFromEnvelope(activeSpendEnvelope.id, amount, spendNote.trim() || 'Envelope spend');
+    setActiveSpendEnvelope(null);
+    setSpendAmount('');
+    setSpendNote('');
+  };
+
+  const handleTransferSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeTransferSource || !transferTarget || activeTransferSource === transferTarget) return;
+    const amount = parseFloat(transferAmount);
+    if (isNaN(amount) || amount <= 0) return;
+
+    onTransferFunds(activeTransferSource, transferTarget, amount);
+    setActiveTransferSource(null);
+    setTransferTarget('');
+    setTransferAmount('');
+  };
+
+  const handleAdjustBalanceSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeAdjustBalanceEnvelope) return;
+    const amount = parseFloat(adjustBalanceAmount);
+    if (isNaN(amount) || amount <= 0) return;
+
+    onAdjustBalance(activeAdjustBalanceEnvelope.id, amount, adjustBalanceMode);
+    setActiveAdjustBalanceEnvelope(null);
+    setAdjustBalanceAmount('');
   };
 
   const handleOpenGoalModal = (envelope?: Envelope) => {
@@ -136,31 +205,31 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   };
 
   const handleSaveGoal = (envelopeId: string, goal: SavingsGoal | undefined) => {
-    if (onUpdateSavingsGoal) {
-      onUpdateSavingsGoal(envelopeId, goal);
-    }
+    onUpdateSavingsGoal?.(envelopeId, goal);
+    setIsGoalModalOpen(false);
+    setSelectedGoalEnvelope(null);
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs transition-colors space-y-6">
-      {/* Top Header with Tab Switcher */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+    <div className="space-y-6">
+      {/* Header & Metric Summary */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-              Envelopes & Sinking Funds
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+              Envelopes &amp; Savings Sinking Funds
             </h3>
             <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full font-medium">
               {envelopes.length} Buckets
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Pre-allocated money buckets &amp; long-term sinking fund targets
+            Total monthly target: <strong>{formatNaira(totalMonthlyTarget)}</strong> • Cash currently funded: <strong>{formatNaira(totalFunded)}</strong>
           </p>
         </div>
 
-        {/* View Switcher Tabs */}
-        <div className="flex items-center gap-2">
+        {/* View Switcher Tabs & Actions */}
+        <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-xs font-semibold">
             <button
               onClick={() => setViewTab('all')}
@@ -181,7 +250,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               }`}
             >
               <Target className="w-3.5 h-3.5" />
-              <span>Savings Goals Tracker</span>
+              <span>Savings Goals</span>
               {envelopesWithGoals.length > 0 && (
                 <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 px-1.5 py-0.2 rounded-full font-extrabold">
                   {envelopesWithGoals.length}
@@ -191,6 +260,16 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* ADD NEW ENVELOPE BUTTON */}
+            <button
+              onClick={handleOpenCreateEnvelope}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors shrink-0"
+              title="Add a new custom envelope (e.g. Toiletries, Online Subscriptions, etc.)"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Envelope</span>
+            </button>
+
             <button
               onClick={() => exportEnvelopesToCsv(envelopes)}
               className="flex items-center gap-1 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl transition-colors border border-slate-200/80 dark:border-slate-700 shrink-0"
@@ -199,6 +278,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               <Download className="w-3.5 h-3.5 text-slate-500" />
               <span className="hidden sm:inline">Export CSV</span>
             </button>
+
             <button
               onClick={() => handleOpenGoalModal()}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-colors shrink-0"
@@ -289,20 +369,11 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               </p>
               <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
                 <button
-                  onClick={() => {
-                    const rent = envelopes.find((e) => e.id === 'env-rent');
-                    handleOpenGoalModal(rent || envelopes[0]);
-                  }}
+                  onClick={() => handleOpenGoalModal()}
                   className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  Set Rent Goal (₦480,000)
-                </button>
-                <button
-                  onClick={() => handleOpenGoalModal()}
-                  className="px-3 py-1.5 text-xs font-medium rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                >
-                  Custom Goal
+                  Define First Savings Goal
                 </button>
               </div>
             </div>
@@ -317,20 +388,6 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                     : 0;
                 const remaining = Math.max(0, goal.targetAmount - env.currentBalance);
                 const isAchieved = env.currentBalance >= goal.targetAmount;
-
-                // Time calculation
-                let monthsRemaining: number | null = null;
-                let recommendedMonthly: number | null = null;
-                if (goal.targetDate) {
-                  const now = new Date();
-                  const target = new Date(goal.targetDate);
-                  const diffTime = target.getTime() - now.getTime();
-                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                  if (diffDays > 0) {
-                    monthsRemaining = Math.max(1, Math.round(diffDays / 30));
-                    recommendedMonthly = Math.ceil(remaining / monthsRemaining);
-                  }
-                }
 
                 return (
                   <div
@@ -425,22 +482,6 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                             </span>
                           )}
                         </div>
-
-                        {/* Target Pace Suggestion */}
-                        {!isAchieved && monthsRemaining && recommendedMonthly && (
-                          <div className="mt-3 p-2 bg-blue-50/70 dark:bg-blue-950/40 rounded-xl border border-blue-100 dark:border-blue-900/50 text-[11px] text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              Save <strong>{formatNaira(recommendedMonthly)}/mo</strong> from upcoming job payouts to reach goal by deadline.
-                            </span>
-                          </div>
-                        )}
-
-                        {goal.note && (
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-2">
-                            &quot;{goal.note}&quot;
-                          </p>
-                        )}
                       </div>
                     </div>
 
@@ -471,9 +512,9 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
         </div>
       )}
 
-      {/* VIEW: All Envelopes (with monthly targets + integrated savings goal tracker) */}
+      {/* VIEW: All Envelopes */}
       {viewTab === 'all' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
           {envelopes.map((envelope) => {
             const Icon = ICON_MAP[envelope.iconName] || Wallet;
             const monthlyPct =
@@ -495,7 +536,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
             return (
               <div
                 key={envelope.id}
-                className={`relative group border rounded-xl p-4 transition-all duration-200 hover:shadow-xs flex flex-col justify-between ${
+                className={`relative group border rounded-2xl p-4 transition-all duration-200 hover:shadow-xs flex flex-col justify-between ${
                   isMonthlyFunded
                     ? 'border-emerald-200/80 dark:border-emerald-800/60 bg-emerald-50/20 dark:bg-emerald-950/20'
                     : isLowMonthly
@@ -504,54 +545,104 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                 }`}
               >
                 <div>
-                  {/* Top Bar: Icon + Name + Category */}
+                  {/* Top Bar: Icon + Name + Category + Edit Pencil */}
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5">
                       <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 shadow-2xs"
                         style={{ backgroundColor: envelope.color }}
                       >
                         <Icon className="w-4 h-4" />
                       </div>
                       <div>
-                        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100 leading-tight">
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight">
                           {envelope.name}
                         </h4>
-                        {envelope.isEssentialForSurvival && (
-                          <span className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.2 rounded font-medium">
-                            Core Survival
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {envelope.category}
                           </span>
-                        )}
+                          {envelope.isEssentialForSurvival && (
+                            <span className="text-[9px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-1 py-0.2 rounded font-semibold">
+                              Core
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <span
-                      className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                        isMonthlyFunded
-                          ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100/60 dark:bg-emerald-950/50'
-                          : isLowMonthly
-                          ? 'text-rose-700 dark:text-rose-300 bg-rose-100/60 dark:bg-rose-950/50'
-                          : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800'
-                      }`}
-                      title="Monthly target funding percentage"
-                    >
-                      {formatPercent(monthlyPct)}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      {/* Edit Envelope Config Button */}
+                      <button
+                        onClick={() => handleOpenEditEnvelope(envelope)}
+                        className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        title="Edit Envelope name, target, color, or icon"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+
+                      <span
+                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                          isMonthlyFunded
+                            ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100/60 dark:bg-emerald-950/50'
+                            : isLowMonthly
+                            ? 'text-rose-700 dark:text-rose-300 bg-rose-100/60 dark:bg-rose-950/50'
+                            : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800'
+                        }`}
+                        title="Monthly target funding percentage"
+                      >
+                        {formatPercent(monthlyPct)}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Current Balance */}
-                  <div className="mt-4">
-                    <p className="text-xl font-bold text-slate-900 dark:text-slate-100">
-                      {formatNaira(envelope.currentBalance)}
-                    </p>
+                  {/* Current Balance & Quick Deposit/Withdraw */}
+                  <div className="mt-3.5 flex items-baseline justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase font-semibold text-slate-400 block leading-none">
+                        Available Balance
+                      </span>
+                      <p className="text-xl font-extrabold text-slate-900 dark:text-slate-100 mt-1">
+                        {formatNaira(envelope.currentBalance)}
+                      </p>
+                    </div>
 
-                    {/* Monthly Target (Editable) */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setActiveAdjustBalanceEnvelope(envelope);
+                          setAdjustBalanceMode('add');
+                          setAdjustBalanceAmount('');
+                        }}
+                        className="px-2 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 rounded-lg transition-colors flex items-center gap-0.5"
+                        title="Add funds directly to this envelope"
+                      >
+                        <ArrowDownLeft className="w-3 h-3 text-emerald-600" />
+                        <span>Add</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setActiveAdjustBalanceEnvelope(envelope);
+                          setAdjustBalanceMode('subtract');
+                          setAdjustBalanceAmount('');
+                        }}
+                        className="px-2 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-0.5"
+                        title="Decrease or withdraw funds from this envelope"
+                      >
+                        <ArrowUpRight className="w-3 h-3 text-slate-500" />
+                        <span>Withdraw</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Monthly Target (Editable with Quick Adjust +/- buttons) */}
+                  <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
                     {editingTargetId === envelope.id ? (
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="text-xs text-slate-400">Monthly: ₦</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-slate-400 font-semibold">₦</span>
                         <input
                           type="number"
-                          className="w-20 text-xs px-1.5 py-0.5 border border-blue-400 rounded focus:outline-none bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                          className="w-24 text-xs font-bold px-1.5 py-0.5 border border-blue-400 rounded focus:outline-none bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                           value={tempTarget}
                           onChange={(e) => setTempTarget(e.target.value)}
                           autoFocus
@@ -559,27 +650,66 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                         <button
                           onClick={() => saveEditTarget(envelope.id)}
                           className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded"
+                          title="Save target"
                         >
                           <Check className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => setEditingTargetId(null)}
                           className="p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                          title="Cancel"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        <span>Mo. Target: {formatNaira(envelope.monthlyTarget)}</span>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">
+                          Mo. Target: <strong>{formatNaira(envelope.monthlyTarget)}</strong>
+                        </span>
                         <button
                           onClick={() => startEditTarget(envelope)}
-                          className="text-[10px] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 underline"
+                          className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 hover:underline"
                         >
-                          Edit
+                          Change
                         </button>
                       </div>
                     )}
+
+                    {/* Quick Increase / Decrease Allocation Buttons (Requirement 1) */}
+                    <div className="flex items-center gap-1 mt-1.5">
+                      <span className="text-[10px] text-slate-400 mr-0.5">Quick adjust:</span>
+                      <button
+                        onClick={() => handleQuickTargetDelta(envelope, -5000)}
+                        disabled={envelope.monthlyTarget < 5000}
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40"
+                        title="Decrease monthly target by ₦5,000"
+                      >
+                        -5k
+                      </button>
+                      <button
+                        onClick={() => handleQuickTargetDelta(envelope, -1000)}
+                        disabled={envelope.monthlyTarget < 1000}
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40"
+                        title="Decrease monthly target by ₦1,000"
+                      >
+                        -1k
+                      </button>
+                      <button
+                        onClick={() => handleQuickTargetDelta(envelope, 1000)}
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300"
+                        title="Increase monthly target by ₦1,000"
+                      >
+                        +1k
+                      </button>
+                      <button
+                        onClick={() => handleQuickTargetDelta(envelope, 5000)}
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300"
+                        title="Increase monthly target by ₦5,000"
+                      >
+                        +5k
+                      </button>
+                    </div>
                   </div>
 
                   {/* Monthly target progress line */}
@@ -599,7 +729,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
 
                   {/* Integrated Long-Term Savings Goal Block */}
                   {goal ? (
-                    <div className="mt-3.5 p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40">
+                    <div className="mt-3 p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-blue-950 dark:text-blue-200 flex items-center gap-1 truncate max-w-[130px]" title={goal.title}>
                           <Target className="w-3 h-3 text-blue-500 shrink-0" />
@@ -631,7 +761,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-3">
+                    <div className="mt-2.5">
                       <button
                         onClick={() => handleOpenGoalModal(envelope)}
                         className="w-full text-[11px] font-medium py-1 px-2 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center gap-1"
@@ -643,25 +773,55 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                   )}
                 </div>
 
-                {/* Bottom Actions: Log Spend & Move */}
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveSpendEnvelope(envelope)}
-                    className="flex-1 text-xs font-medium py-1.5 px-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 rounded-lg transition-colors border border-slate-200/60 dark:border-slate-700 flex items-center justify-center gap-1"
-                  >
-                    <Plus className="w-3 h-3 text-slate-500" />
-                    Log Spend
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveTransferSource(envelope.id);
-                      setTransferTarget(envelopes.find((e) => e.id !== envelope.id)?.id || '');
-                    }}
-                    title="Move funds between buckets"
-                    className="text-xs font-medium py-1.5 px-2 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                  >
-                    Move
-                  </button>
+                {/* Bottom Actions: Log Spend & Move & Delete */}
+                <div className="mt-3.5 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-1">
+                    <button
+                      onClick={() => setActiveSpendEnvelope(envelope)}
+                      className="flex-1 text-xs font-semibold py-1.5 px-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 rounded-lg transition-colors border border-slate-200/60 dark:border-slate-700 flex items-center justify-center gap-1"
+                    >
+                      <Plus className="w-3 h-3 text-slate-500" />
+                      <span>Spend</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTransferSource(envelope.id);
+                        setTransferTarget(envelopes.find((e) => e.id !== envelope.id)?.id || '');
+                      }}
+                      title="Move funds between envelopes"
+                      className="text-xs font-semibold py-1.5 px-2.5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                    >
+                      Move
+                    </button>
+                  </div>
+
+                  {deletingEnvelopeId === envelope.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          onDeleteEnvelope(envelope.id);
+                          setDeletingEnvelopeId(null);
+                        }}
+                        className="px-2 py-1 text-[10px] font-bold text-white bg-rose-600 rounded-md shadow-xs"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        onClick={() => setDeletingEnvelopeId(null)}
+                        className="p-1 text-[10px] text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setDeletingEnvelopeId(envelope.id)}
+                      className="p-1.5 text-slate-300 hover:text-rose-600 dark:text-slate-600 dark:hover:text-rose-400 rounded-md transition-colors"
+                      title="Delete this envelope"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -688,7 +848,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
             <form onSubmit={handleSpendSubmit} className="mt-4 space-y-3.5">
               <div>
                 <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Amount to Spend (Current Available: {formatNaira(activeSpendEnvelope.currentBalance)})
+                  Amount to Spend (Available: {formatNaira(activeSpendEnvelope.currentBalance)})
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 text-slate-400 text-sm font-semibold">₦</span>
@@ -711,7 +871,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g., Weekly shopping, data pack renewal..."
+                  placeholder="e.g. Weekly shopping, pack renewal..."
                   value={spendNote}
                   onChange={(e) => setSpendNote(e.target.value)}
                   className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
@@ -731,6 +891,97 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                   className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 rounded-xl"
                 >
                   Confirm Spend
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Direct Adjust Balance Modal (Deposit / Withdraw) */}
+      {activeAdjustBalanceEnvelope && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 max-w-sm w-full shadow-xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                {adjustBalanceMode === 'add' ? (
+                  <ArrowDownLeft className="w-4 h-4 text-emerald-500" />
+                ) : (
+                  <ArrowUpRight className="w-4 h-4 text-amber-500" />
+                )}
+                <span>
+                  {adjustBalanceMode === 'add' ? 'Deposit to' : 'Withdraw from'} {activeAdjustBalanceEnvelope.name}
+                </span>
+              </h4>
+              <button
+                onClick={() => setActiveAdjustBalanceEnvelope(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAdjustBalanceSubmit} className="mt-4 space-y-3.5">
+              <div className="flex items-center gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setAdjustBalanceMode('add')}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${
+                    adjustBalanceMode === 'add'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  + Add Funds (Deposit)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdjustBalanceMode('subtract')}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${
+                    adjustBalanceMode === 'subtract'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  - Withdraw / Decrease
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Amount (₦) — Current Balance: <strong>{formatNaira(activeAdjustBalanceEnvelope.currentBalance)}</strong>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400 text-sm font-semibold">₦</span>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    placeholder="e.g. 5000"
+                    value={adjustBalanceAmount}
+                    onChange={(e) => setAdjustBalanceAmount(e.target.value)}
+                    className="w-full pl-7 pr-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveAdjustBalanceEnvelope(null)}
+                  className="px-3.5 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={`px-4 py-2 text-xs font-bold text-white rounded-xl shadow-xs ${
+                    adjustBalanceMode === 'add'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-rose-600 hover:bg-rose-700'
+                  }`}
+                >
+                  {adjustBalanceMode === 'add' ? 'Confirm Deposit' : 'Confirm Decrease'}
                 </button>
               </div>
             </form>
@@ -830,6 +1081,33 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
           </div>
         </div>
       )}
+
+      {/* Envelope Editor Modal (Create New or Edit Existing Envelope) */}
+      <EnvelopeEditorModal
+        isOpen={isEditorOpen}
+        envelopeToEdit={editingEnvelope}
+        onClose={() => {
+          setIsEditorOpen(false);
+          setEditingEnvelope(null);
+        }}
+        onSaveEnvelope={(envelopeData: Omit<Envelope, 'id'> & { id?: string }) => {
+          if (editingEnvelope) {
+            onUpdateEnvelope({
+              ...editingEnvelope,
+              ...envelopeData,
+            });
+          } else {
+            onAddEnvelope(envelopeData);
+          }
+          setIsEditorOpen(false);
+          setEditingEnvelope(null);
+        }}
+        onDeleteEnvelope={(id: string) => {
+          onDeleteEnvelope(id);
+          setIsEditorOpen(false);
+          setEditingEnvelope(null);
+        }}
+      />
 
       {/* Savings Goal Configuration Modal */}
       <SavingsGoalModal
