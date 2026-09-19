@@ -39,6 +39,7 @@ interface ExportDataModalProps {
   onClose: () => void;
   appState: AppState;
   onRestoreState: (newState: AppState) => void;
+  initialTab?: 'autobackup' | 'localfile' | 'csv' | 'json';
 }
 
 export const ExportDataModal: React.FC<ExportDataModalProps> = ({
@@ -46,12 +47,16 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
   onClose,
   appState,
   onRestoreState,
+  initialTab = 'autobackup',
 }) => {
-  const [activeTab, setActiveTab] = useState<'csv' | 'autobackup' | 'json'>('autobackup');
+  const [activeTab, setActiveTab] = useState<'csv' | 'autobackup' | 'localfile' | 'json'>(initialTab);
   const [downloadSuccessMessage, setDownloadSuccessMessage] = useState<string | null>(null);
 
-  // Import state
+  // File import state with drag & drop support
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [importFileSize, setImportFileSize] = useState<string | null>(null);
   const [importedStateCandidate, setImportedStateCandidate] = useState<AppState | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
@@ -127,11 +132,11 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const processFile = (file: File) => {
     setImportError(null);
     setImportSuccessMessage(null);
-    const file = e.target.files?.[0];
-    if (!file) return;
+    setImportFileName(file.name);
+    setImportFileSize(`${(file.size / 1024).toFixed(1)} KB`);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -142,25 +147,55 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
         if (result.valid && result.state) {
           setImportedStateCandidate(result.state);
         } else {
-          setImportError(result.error || 'Invalid backup structure.');
+          setImportError(result.error || 'Invalid backup structure. Required fields missing.');
           setImportedStateCandidate(null);
         }
       } catch {
-        setImportError('Failed to read file as JSON. Please ensure it is a valid backup.');
+        setImportError('Failed to read file as JSON. Please ensure it is a valid backup file.');
         setImportedStateCandidate(null);
       }
     };
     reader.readAsText(file);
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
   const handleConfirmRestore = () => {
     if (!importedStateCandidate) return;
     onRestoreState(importedStateCandidate);
-    setImportSuccessMessage('Data restored successfully into your active session!');
+    setImportSuccessMessage(
+      importFileName
+        ? `Successfully restored all financial records from "${importFileName}"!`
+        : 'Data restored successfully into your active session!'
+    );
     setImportedStateCandidate(null);
     setTimeout(() => {
       onClose();
-    }, 1500);
+    }, 1600);
   };
 
   const handleRestoreSnapshot = (snap: BackupSnapshot) => {
@@ -199,6 +234,174 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
 
   const snapshots = appState.backupSnapshots || [];
 
+  const renderLocalFileRestoreSection = () => (
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`p-4 sm:p-5 rounded-2xl border transition-all duration-150 space-y-4 ${
+        isDragOver
+          ? 'bg-blue-50/80 dark:bg-blue-950/50 border-blue-500 ring-2 ring-blue-400'
+          : 'bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/80'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+            <Upload className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            Restore Directly from Local File (.json)
+          </h4>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+            Choose or drag &amp; drop any saved <code>obaslord-finance-backup-*.json</code> file from your local storage to restore your exact financial state, envelopes, jobs, and expense history.
+          </p>
+        </div>
+        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 shrink-0">
+          Offline File
+        </span>
+      </div>
+
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".json,application/json"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      <div className="p-4 border-2 border-dashed border-slate-300 dark:border-slate-650 rounded-xl flex flex-col items-center justify-center text-center bg-white/60 dark:bg-slate-850/60 hover:bg-white dark:hover:bg-slate-850 transition-colors">
+        <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-2">
+          <Upload className="w-5 h-5" />
+        </div>
+        <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1">
+          {importFileName ? (
+            <span className="text-emerald-700 dark:text-emerald-300">
+              Selected: <strong>{importFileName}</strong> ({importFileSize})
+            </span>
+          ) : (
+            'Drop your backup file here or browse from device'
+          )}
+        </p>
+        <p className="text-[11px] text-slate-400 mb-3">
+          Compatible with all Obaslord Finance Tracker JSON export backups
+        </p>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="px-4 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 rounded-xl shadow-xs transition-colors flex items-center gap-2"
+        >
+          <Upload className="w-3.5 h-3.5" />
+          <span>Browse Local Files...</span>
+        </button>
+      </div>
+
+      {/* Error Message */}
+      {importError && (
+        <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span>{importError}</span>
+        </div>
+      )}
+
+      {/* Success Message */}
+      {importSuccessMessage && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{importSuccessMessage}</span>
+        </div>
+      )}
+
+      {/* Candidate Preview & Confirmation */}
+      {importedStateCandidate && !importSuccessMessage && (
+        <div className="p-4 bg-white dark:bg-slate-850 border border-emerald-300 dark:border-emerald-800/80 rounded-xl space-y-3 shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                Backup Verified &amp; Ready to Restore
+              </span>
+            </div>
+            <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono font-bold">
+              VERIFIED VALID
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl text-xs">
+            <div>
+              <span className="text-[10px] text-slate-400 block">Envelopes:</span>
+              <strong className="text-slate-800 dark:text-slate-200">
+                {importedStateCandidate.envelopes.length} buckets
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Envelopes Cash:</span>
+              <strong className="text-blue-600 dark:text-blue-400">
+                {formatNaira(importedStateCandidate.envelopes.reduce((s, e) => s + e.currentBalance, 0))}
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Contracts / Jobs:</span>
+              <strong className="text-slate-800 dark:text-slate-200">
+                {importedStateCandidate.jobs.length} jobs
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Expenses Logged:</span>
+              <strong className="text-slate-800 dark:text-slate-200">
+                {importedStateCandidate.expenseHistory.length} records
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Tax Reserve (10%):</span>
+              <strong className="text-rose-600 dark:text-rose-400">
+                {formatNaira(importedStateCandidate.taxReserve || 0)}
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Emergency Buffer:</span>
+              <strong className="text-emerald-600 dark:text-emerald-400">
+                {formatNaira(importedStateCandidate.survivalBufferCash || 0)}
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Payment Receipts:</span>
+              <strong className="text-slate-800 dark:text-slate-200">
+                {importedStateCandidate.paymentReceipts.length} receipts
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Monetary Gifts:</span>
+              <strong className="text-slate-800 dark:text-slate-200">
+                {(importedStateCandidate.giftLogs || []).length} gifts
+              </strong>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={handleConfirmRestore}
+              className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Confirm &amp; Restore Complete Backup</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setImportedStateCandidate(null);
+                setImportFileName(null);
+                setImportFileSize(null);
+              }}
+              className="px-3 py-2 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
       <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 my-8 transition-colors">
@@ -231,7 +434,7 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
             onClick={() => setActiveTab('autobackup')}
             className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'autobackup'
-                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
@@ -239,10 +442,21 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
             <span>Weekly Auto-Backup</span>
           </button>
           <button
+            onClick={() => setActiveTab('localfile')}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'localfile'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Upload className="w-4 h-4 text-emerald-500" />
+            <span>Restore from Local File</span>
+          </button>
+          <button
             onClick={() => setActiveTab('csv')}
             className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'csv'
-                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
@@ -253,12 +467,12 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
             onClick={() => setActiveTab('json')}
             className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'json'
-                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Database className="w-4 h-4 text-purple-500" />
-            <span>Manual Backup &amp; Restore</span>
+            <span>Manual JSON Export</span>
           </button>
         </div>
 
@@ -382,6 +596,33 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Direct Local File Restore banner inside Auto-Backup tab */}
+            <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 rounded-xl flex items-center justify-between gap-3">
+              <div>
+                <h5 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <Upload className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  Have a saved .json backup on your device?
+                </h5>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  You can restore directly from a local file at any time without waiting or relying on rolling snapshots alone.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('localfile')}
+                className="shrink-0 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900 border border-emerald-300 dark:border-emerald-800 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <span>Restore from File &rarr;</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: RESTORE DIRECTLY FROM LOCAL FILE */}
+        {activeTab === 'localfile' && (
+          <div className="mt-4 space-y-4">
+            {renderLocalFileRestoreSection()}
           </div>
         )}
 
@@ -562,87 +803,8 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
               </div>
             </div>
 
-            {/* Restore from JSON */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl space-y-3">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                  <Upload className="w-4 h-4 text-emerald-500" />
-                  Restore / Import Backup File
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Upload a previously exported <code>obaslord-finance-backup-*.json</code> file to restore your entire financial state.
-                </p>
-              </div>
-
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".json,application/json"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-750 rounded-xl transition-colors flex items-center gap-2"
-                >
-                  <Upload className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Select .json Backup File</span>
-                </button>
-                <span className="text-[11px] text-slate-400">
-                  {importedStateCandidate ? 'File loaded & ready' : 'No file selected'}
-                </span>
-              </div>
-
-              {/* Error Display */}
-              {importError && (
-                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>{importError}</span>
-                </div>
-              )}
-
-              {/* Success Banner */}
-              {importSuccessMessage && (
-                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{importSuccessMessage}</span>
-                </div>
-              )}
-
-              {/* Candidate Preview and Confirmation */}
-              {importedStateCandidate && !importSuccessMessage && (
-                <div className="p-3.5 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-blue-950 dark:text-blue-200">
-                    <span>Backup Verified: Ready to Restore</span>
-                    <span className="text-[10px] bg-blue-200 dark:bg-blue-900 text-blue-900 dark:text-blue-200 px-2 py-0.5 rounded font-mono">
-                      VALID
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-blue-900 dark:text-blue-300">
-                    <div>Envelopes: <strong>{importedStateCandidate.envelopes.length}</strong></div>
-                    <div>Jobs: <strong>{importedStateCandidate.jobs.length}</strong></div>
-                    <div>Expenses: <strong>{importedStateCandidate.expenseHistory.length}</strong></div>
-                    <div>Receipts: <strong>{importedStateCandidate.paymentReceipts.length}</strong></div>
-                  </div>
-                  <div className="pt-2 flex items-center gap-2">
-                    <button
-                      onClick={handleConfirmRestore}
-                      className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-colors"
-                    >
-                      Confirm &amp; Restore This Backup
-                    </button>
-                    <button
-                      onClick={() => setImportedStateCandidate(null)}
-                      className="px-3 py-2 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* Restore from JSON File using shared local file restore section */}
+            {renderLocalFileRestoreSection()}
           </div>
         )}
 

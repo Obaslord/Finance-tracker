@@ -172,11 +172,11 @@ export const SAMPLE_DEMO_STATE: AppState = {
     },
   ],
   envelopes: DEFAULT_ENVELOPES.map((e) => {
-    if (e.id === 'env-rent') return { ...e, currentBalance: 25000 };
-    if (e.id === 'env-food') return { ...e, currentBalance: 20000 };
-    if (e.id === 'env-loan') return { ...e, currentBalance: 20000 };
-    if (e.id === 'env-child') return { ...e, currentBalance: 10000 };
-    if (e.id === 'env-data') return { ...e, currentBalance: 6000 };
+    if (e.id === 'env-rent') return { ...e, currentBalance: 25000, cumulativeAllocated: 25000 };
+    if (e.id === 'env-food') return { ...e, currentBalance: 20000, cumulativeAllocated: 20000 };
+    if (e.id === 'env-loan') return { ...e, currentBalance: 20000, cumulativeAllocated: 20000 };
+    if (e.id === 'env-child') return { ...e, currentBalance: 10000, cumulativeAllocated: 10000 };
+    if (e.id === 'env-data') return { ...e, currentBalance: 6000, cumulativeAllocated: 10000 };
     return e;
   }),
   taxReserve: 9000,

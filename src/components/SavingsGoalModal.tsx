@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { Envelope, SavingsGoal } from '../types';
+import { Envelope, ExpenseRecord, PaymentReceipt, SavingsGoal } from '../types';
 import { formatNaira, formatPercent } from '../utils/formatters';
 
 interface SavingsGoalModalProps {
@@ -19,6 +19,8 @@ interface SavingsGoalModalProps {
   selectedEnvelope: Envelope | null;
   envelopes: Envelope[];
   onSaveGoal: (envelopeId: string, goal: SavingsGoal | undefined) => void;
+  expenseHistory?: ExpenseRecord[];
+  paymentReceipts?: PaymentReceipt[];
 }
 
 const PRESET_TITLES = [
@@ -36,6 +38,8 @@ export const SavingsGoalModal: React.FC<SavingsGoalModalProps> = ({
   selectedEnvelope,
   envelopes,
   onSaveGoal,
+  expenseHistory = [],
+  paymentReceipts = [],
 }) => {
   const [targetEnvelopeId, setTargetEnvelopeId] = useState<string>('');
   const [targetAmountStr, setTargetAmountStr] = useState<string>('');
@@ -84,9 +88,21 @@ export const SavingsGoalModal: React.FC<SavingsGoalModalProps> = ({
 
   const currentEnvelope = envelopes.find((e) => e.id === targetEnvelopeId);
   const targetAmount = parseFloat(targetAmountStr) || 0;
-  const currentBalance = currentEnvelope?.currentBalance || 0;
-  const pct = targetAmount > 0 ? Math.min(100, Math.round((currentBalance / targetAmount) * 100)) : 0;
-  const remaining = Math.max(0, targetAmount - currentBalance);
+
+  // Calculate total saved / allocated towards this envelope (preserves savings progress even after spending)
+  const spentOnEnvelope =
+    expenseHistory.filter((e) => e.envelopeId === targetEnvelopeId).reduce((sum, e) => sum + e.amount, 0);
+  const receiptAllocOnEnvelope =
+    paymentReceipts.reduce((sum, r) => sum + (r.allocatedAmounts?.[targetEnvelopeId] || 0), 0);
+  const currentDirect = (currentEnvelope?.currentBalance || 0) + spentOnEnvelope;
+  const savedSoFar = Math.max(
+    currentEnvelope?.cumulativeAllocated || 0,
+    currentDirect,
+    receiptAllocOnEnvelope
+  );
+
+  const pct = targetAmount > 0 ? Math.min(100, Math.round((savedSoFar / targetAmount) * 100)) : 0;
+  const remaining = Math.max(0, targetAmount - savedSoFar);
 
   // Time calculation if target date is set
   let monthsRemaining: number | null = null;
@@ -174,12 +190,23 @@ export const SavingsGoalModal: React.FC<SavingsGoalModalProps> = ({
               onChange={(e) => handleEnvelopeChange(e.target.value)}
               className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {envelopes.map((env) => (
-                <option key={env.id} value={env.id}>
-                  {env.name} (Current: {formatNaira(env.currentBalance)}
-                  {env.savingsGoal ? ` • Goal: ${formatNaira(env.savingsGoal.targetAmount)}` : ''})
-                </option>
-              ))}
+              {envelopes.map((env) => {
+                const envSpent =
+                  expenseHistory.filter((e) => e.envelopeId === env.id).reduce((sum, e) => sum + e.amount, 0);
+                const envReceiptAlloc =
+                  paymentReceipts.reduce((sum, r) => sum + (r.allocatedAmounts?.[env.id] || 0), 0);
+                const envSaved = Math.max(
+                  env.cumulativeAllocated || 0,
+                  env.currentBalance + envSpent,
+                  envReceiptAlloc
+                );
+                return (
+                  <option key={env.id} value={env.id}>
+                    {env.name} (Saved: {formatNaira(envSaved)}
+                    {env.savingsGoal ? ` • Target: ${formatNaira(env.savingsGoal.targetAmount)}` : ''})
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -332,7 +359,14 @@ export const SavingsGoalModal: React.FC<SavingsGoalModalProps> = ({
               </div>
 
               <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
-                <span>Funded: {formatNaira(currentBalance)}</span>
+                <span>
+                  Saved: <strong className="text-slate-900 dark:text-slate-100 font-bold">{formatNaira(savedSoFar)}</strong>
+                  {spentOnEnvelope > 0 && (
+                    <span className="ml-1 text-[10px] text-slate-400">
+                      ({formatNaira(spentOnEnvelope)} logged spend preserved)
+                    </span>
+                  )}
+                </span>
                 <span>
                   {remaining > 0 ? `${formatNaira(remaining)} remaining` : 'Target Achieved! 🎉'}
                 </span>

@@ -10,14 +10,19 @@ import {
   History,
   Moon,
   Plus,
+  RefreshCw,
   Settings,
   Sun,
   TrendingDown,
+  Upload,
   Wallet,
   Zap,
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+import { BufferReallocationModal } from './components/BufferReallocationModal';
 import { CashFlowVisualizer } from './components/CashFlowVisualizer';
+import { DashboardCapitalFlowHub } from './components/DashboardCapitalFlowHub';
+import { DashboardFinancialPulseWidget } from './components/DashboardFinancialPulseWidget';
 import { EnvelopesSection } from './components/EnvelopesSection';
 import { ExpenseHistoryModal } from './components/ExpenseHistoryModal';
 import { ExportDataModal } from './components/ExportDataModal';
@@ -125,6 +130,9 @@ export default function App() {
   const [isQuickSpendOpen, setIsQuickSpendOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportModalInitialTab, setExportModalInitialTab] = useState<'autobackup' | 'localfile' | 'csv' | 'json'>('autobackup');
+  const [isBufferReallocateOpen, setIsBufferReallocateOpen] = useState(false);
+  const [dashboardViewMode, setDashboardViewMode] = useState<'simplified' | 'detailed'>('simplified');
 
   // Active view tab
   const [activeTab, setActiveTab] = useState<
@@ -237,6 +245,7 @@ export default function App() {
         return {
           ...env,
           currentBalance: env.currentBalance + allocated,
+          cumulativeAllocated: (env.cumulativeAllocated || env.currentBalance || 0) + allocated,
         };
       });
 
@@ -360,7 +369,13 @@ export default function App() {
         buffer += amount;
       } else {
         envelopes = envelopes.map((env) =>
-          env.id === targetId ? { ...env, currentBalance: env.currentBalance + amount } : env
+          env.id === targetId
+            ? {
+                ...env,
+                currentBalance: env.currentBalance + amount,
+                cumulativeAllocated: (env.cumulativeAllocated || env.currentBalance || 0) + amount,
+              }
+            : env
         );
       }
 
@@ -437,7 +452,11 @@ export default function App() {
       envelopes: prev.envelopes.map((e) => {
         if (e.id !== envelopeId) return e;
         const newBal = mode === 'add' ? e.currentBalance + amount : Math.max(0, e.currentBalance - amount);
-        return { ...e, currentBalance: newBal };
+        const newCumulative =
+          mode === 'add'
+            ? (e.cumulativeAllocated || e.currentBalance || 0) + amount
+            : (e.cumulativeAllocated || e.currentBalance || 0);
+        return { ...e, currentBalance: newBal, cumulativeAllocated: newCumulative };
       }),
     }));
   };
@@ -548,6 +567,87 @@ export default function App() {
     setState(newState);
   };
 
+  // Automated 30-Day Budget Cycle Rollover: check if 30 days (30 * 24 * 60 * 60 * 1000 ms) have passed
+  useEffect(() => {
+    const cycleStartMs = state.budgetCycleStartDate ? new Date(state.budgetCycleStartDate).getTime() : Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    if (Date.now() - cycleStartMs >= thirtyDaysMs) {
+      handleTriggerCycleRollover();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.budgetCycleStartDate]);
+
+  // Handler to sweep unspent envelope balances back to Buffer / Cash-in-Hand and advance cycle
+  const handleTriggerCycleRollover = () => {
+    setState((prev) => {
+      const totalUnspentCash = prev.envelopes.reduce((sum, e) => sum + e.currentBalance, 0);
+      const newBufferCash = prev.survivalBufferCash + totalUnspentCash;
+      const nowIso = new Date().toISOString();
+
+      const envelopesSwept = prev.envelopes
+        .filter((e) => e.currentBalance > 0)
+        .map((e) => ({
+          envelopeId: e.id,
+          envelopeName: e.name,
+          sweptAmount: e.currentBalance,
+        }));
+
+      const rolloverRecord = {
+        id: `rollover_${Date.now()}`,
+        cycleNumber: prev.budgetCycleNumber || 1,
+        startDate: prev.budgetCycleStartDate || nowIso,
+        endDate: nowIso,
+        totalSweptToBuffer: totalUnspentCash,
+        envelopesSwept,
+        date: nowIso,
+      };
+
+      // Reset each envelope's currentBalance to 0 and monthlyAllocated to 0 for the fresh month,
+      // while strictly PRESERVING cumulativeAllocated and savingsGoal!
+      const resetEnvelopes = prev.envelopes.map((e) => ({
+        ...e,
+        currentBalance: 0,
+        monthlyAllocated: 0,
+      }));
+
+      return {
+        ...prev,
+        envelopes: resetEnvelopes,
+        survivalBufferCash: newBufferCash,
+        budgetCycleStartDate: nowIso,
+        budgetCycleNumber: (prev.budgetCycleNumber || 1) + 1,
+        cycleRolloverHistory: [...(prev.cycleRolloverHistory || []), rolloverRecord],
+      };
+    });
+
+    // Automatically open Reallocation modal so user can immediately redistribute cash on hand for the new month
+    setIsBufferReallocateOpen(true);
+  };
+
+  // Handler to commit reallocated funds from buffer / cash in hand to envelopes
+  const handleCommitBufferReallocation = (allocations: Record<string, number>) => {
+    setState((prev) => {
+      const totalAllocated = Object.values(allocations).reduce((sum, val) => sum + (val || 0), 0);
+      const updatedEnvelopes = prev.envelopes.map((env) => {
+        const added = allocations[env.id] || 0;
+        if (added <= 0) return env;
+        return {
+          ...env,
+          currentBalance: env.currentBalance + added,
+          monthlyAllocated: (env.monthlyAllocated || 0) + added,
+          cumulativeAllocated: (env.cumulativeAllocated || 0) + added,
+        };
+      });
+
+      return {
+        ...prev,
+        envelopes: updatedEnvelopes,
+        survivalBufferCash: Math.max(0, prev.survivalBufferCash - totalAllocated),
+      };
+    });
+    setIsBufferReallocateOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50/80 dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased selection:bg-blue-100 dark:selection:bg-blue-900 selection:text-blue-900 dark:selection:text-blue-100 pb-16 transition-colors duration-200">
       {/* Top Navigation Bar */}
@@ -588,14 +688,30 @@ export default function App() {
               <span className="hidden md:inline">Spend Log</span>
             </button>
 
-            {/* Export & Backup Data Button */}
+            {/* Backup & Export Data Button */}
             <button
-              onClick={() => setIsExportModalOpen(true)}
+              onClick={() => {
+                setExportModalInitialTab('autobackup');
+                setIsExportModalOpen(true);
+              }}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl transition-colors border border-slate-200/60 dark:border-slate-750"
-              title="Export CSV & Backup data"
+              title="Backup, Export CSV & Restore Data"
             >
               <Download className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-              <span className="hidden lg:inline">Export</span>
+              <span className="hidden lg:inline">Backup &amp; Export</span>
+            </button>
+
+            {/* Direct Restore from Local File Button */}
+            <button
+              onClick={() => {
+                setExportModalInitialTab('localfile');
+                setIsExportModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 rounded-xl transition-colors border border-emerald-200/70 dark:border-emerald-800/60"
+              title="Restore directly from a local JSON backup file"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span className="hidden xl:inline">Restore File</span>
             </button>
 
             {/* Theme Toggle Button */}
@@ -740,17 +856,70 @@ export default function App() {
           />
         )}
 
-        {/* Active Tab: Overview */}
+        {/* Active Tab: Overview (Simplified Dashboard) */}
         {activeTab === 'overview' && (
-          <>
-            {/* Visual Cash Flow Snapshot */}
-            <CashFlowVisualizer
-              receipts={state.paymentReceipts}
-              expenses={state.expenseHistory}
+          <div className="space-y-6">
+            {/* Dashboard Sub-Header with View Mode Switcher & Quick Actions */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    Executive Dashboard
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60">
+                      Simplified Mode Active
+                    </span>
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    High-level financial pulse, cash burn, and capital allocation
+                  </p>
+                </div>
+              </div>
+
+              {/* View Mode Toggle: Simplified vs Detailed All-in-One */}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
+                  <button
+                    onClick={() => setDashboardViewMode('simplified')}
+                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                      dashboardViewMode === 'simplified'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Simplified</span>
+                  </button>
+                  <button
+                    onClick={() => setDashboardViewMode('detailed')}
+                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                      dashboardViewMode === 'detailed'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <span>Detailed (All-in-One)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* The 4-Bar Financial Pulse Widget (Requested by User) */}
+            <DashboardFinancialPulseWidget
               envelopes={state.envelopes}
+              expenses={state.expenseHistory}
+              receipts={state.paymentReceipts}
+              giftLogs={state.giftLogs || []}
               survivalBufferCash={state.survivalBufferCash}
               taxReserve={state.taxReserve}
-              pendingPipelineAmount={pendingPipelineAmount}
+              budgetCycleStartDate={state.budgetCycleStartDate}
+              budgetCycleNumber={state.budgetCycleNumber || 1}
+              onOpenQuickSpend={() => setIsQuickSpendOpen(true)}
+              onOpenBufferReallocate={() => setIsBufferReallocateOpen(true)}
+              onNavigateToEnvelopes={() => setActiveTab('envelopes')}
+              onNavigateToJobs={() => setActiveTab('jobs')}
             />
 
             {/* Monthly Inflow Quick Summary Banner (Contracts vs Gifts) */}
@@ -778,37 +947,75 @@ export default function App() {
               </div>
             )}
 
-            {/* Active Job Board */}
-            <JobBoard
-              jobs={state.jobs}
-              onAddJob={handleAddJob}
-              onReceivePayment={handleReceivePaymentInitiate}
-              onUpdateJobStatus={handleUpdateJobStatus}
-              onDeleteJob={handleDeleteJob}
-            />
-
-            {/* Envelopes & Sinking Funds Section */}
-            <EnvelopesSection
+            {/* Capital Flow Intelligence Hub (What has been spent, spent into, and all those things) */}
+            <DashboardCapitalFlowHub
               envelopes={state.envelopes}
+              expenses={state.expenseHistory}
+              receipts={state.paymentReceipts}
               survivalBufferCash={state.survivalBufferCash}
-              onSpendFromEnvelope={handleSpendFromEnvelope}
-              onTransferFunds={handleTransferFunds}
-              onAdjustTarget={handleAdjustTarget}
-              onUpdateSavingsGoal={handleUpdateSavingsGoal}
-              onAddEnvelope={handleAddEnvelope}
-              onUpdateEnvelope={handleUpdateEnvelope}
-              onDeleteEnvelope={handleDeleteEnvelope}
-              onAdjustBalance={handleAdjustEnvelopeBalance}
+              taxReserve={state.taxReserve}
+              pendingPipelineAmount={pendingPipelineAmount}
+              activeJobsCount={state.jobs.filter((j) => j.status !== 'completed' && j.status !== 'cancelled').length}
+              budgetCycleStartDate={state.budgetCycleStartDate}
+              onOpenQuickSpend={() => setIsQuickSpendOpen(true)}
+              onOpenBufferReallocate={() => setIsBufferReallocateOpen(true)}
+              onNavigateToJobs={() => setActiveTab('jobs')}
+              onNavigateToEnvelopes={() => setActiveTab('envelopes')}
+              onNavigateToTax={() => setActiveTab('tax')}
+              onNavigateToTrends={() => setActiveTab('trends')}
             />
 
-            {/* Tax Vault & Receipts */}
-            <TaxAndReceiptsSection
-              taxReserve={state.taxReserve}
-              paymentReceipts={state.paymentReceipts}
-              expenseHistory={state.expenseHistory}
-              onPayTax={handlePayTax}
-            />
-          </>
+            {/* If user explicitly toggles detailed view, render full boards */}
+            {dashboardViewMode === 'detailed' && (
+              <div className="space-y-6 pt-4 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Full Embedded Boards (Detailed View)
+                  </h3>
+                  <button
+                    onClick={() => setDashboardViewMode('simplified')}
+                    className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+                  >
+                    Switch back to Simplified Dashboard
+                  </button>
+                </div>
+
+                <JobBoard
+                  jobs={state.jobs}
+                  onAddJob={handleAddJob}
+                  onReceivePayment={handleReceivePaymentInitiate}
+                  onUpdateJobStatus={handleUpdateJobStatus}
+                  onDeleteJob={handleDeleteJob}
+                />
+
+                <EnvelopesSection
+                  envelopes={state.envelopes}
+                  survivalBufferCash={state.survivalBufferCash}
+                  expenseHistory={state.expenseHistory}
+                  paymentReceipts={state.paymentReceipts}
+                  budgetCycleStartDate={state.budgetCycleStartDate}
+                  budgetCycleNumber={state.budgetCycleNumber || 1}
+                  onTriggerCycleRollover={handleTriggerCycleRollover}
+                  onOpenBufferReallocate={() => setIsBufferReallocateOpen(true)}
+                  onSpendFromEnvelope={handleSpendFromEnvelope}
+                  onTransferFunds={handleTransferFunds}
+                  onAdjustTarget={handleAdjustTarget}
+                  onUpdateSavingsGoal={handleUpdateSavingsGoal}
+                  onAddEnvelope={handleAddEnvelope}
+                  onUpdateEnvelope={handleUpdateEnvelope}
+                  onDeleteEnvelope={handleDeleteEnvelope}
+                  onAdjustBalance={handleAdjustEnvelopeBalance}
+                />
+
+                <TaxAndReceiptsSection
+                  taxReserve={state.taxReserve}
+                  paymentReceipts={state.paymentReceipts}
+                  expenseHistory={state.expenseHistory}
+                  onPayTax={handlePayTax}
+                />
+              </div>
+            )}
+          </div>
         )}
 
         {/* Active Tab: Jobs */}
@@ -844,6 +1051,12 @@ export default function App() {
           <EnvelopesSection
             envelopes={state.envelopes}
             survivalBufferCash={state.survivalBufferCash}
+            expenseHistory={state.expenseHistory}
+            paymentReceipts={state.paymentReceipts}
+            budgetCycleStartDate={state.budgetCycleStartDate}
+            budgetCycleNumber={state.budgetCycleNumber || 1}
+            onTriggerCycleRollover={handleTriggerCycleRollover}
+            onOpenBufferReallocate={() => setIsBufferReallocateOpen(true)}
             onSpendFromEnvelope={handleSpendFromEnvelope}
             onTransferFunds={handleTransferFunds}
             onAdjustTarget={handleAdjustTarget}
@@ -950,8 +1163,9 @@ export default function App() {
           setIsSettingsOpen(false);
           setIsSurvivalConfigOpen(true);
         }}
-        onOpenExportModal={() => {
+        onOpenExportModal={(tab) => {
           setIsSettingsOpen(false);
+          setExportModalInitialTab(tab || 'autobackup');
           setIsExportModalOpen(true);
         }}
       />
@@ -971,6 +1185,17 @@ export default function App() {
         onClose={() => setIsExportModalOpen(false)}
         appState={state}
         onRestoreState={handleRestoreState}
+        initialTab={exportModalInitialTab}
+      />
+
+      {/* Buffer / Cash in Hand 30-Day Cycle Reallocation Modal */}
+      <BufferReallocationModal
+        isOpen={isBufferReallocateOpen}
+        onClose={() => setIsBufferReallocateOpen(false)}
+        envelopes={state.envelopes}
+        survivalBufferCash={state.survivalBufferCash}
+        cycleNumber={state.budgetCycleNumber || 1}
+        onConfirmReallocation={handleCommitBufferReallocation}
       />
 
       {/* Network Connectivity / Offline Indicator */}

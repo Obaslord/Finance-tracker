@@ -4,12 +4,14 @@ import {
   Download,
   EyeOff,
   Moon,
+  Percent,
   RotateCcw,
   ShieldAlert,
   Sliders,
   Sparkles,
   Sun,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import React, { useState } from 'react';
@@ -26,7 +28,7 @@ interface SettingsModalProps {
   onResetToZeroBaseline: () => void;
   onLoadDemoState: () => void;
   onOpenSurvivalConfig: () => void;
-  onOpenExportModal?: () => void;
+  onOpenExportModal?: (tab?: 'autobackup' | 'localfile' | 'csv' | 'json') => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -270,25 +272,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
 
             {/* Data Export & Backup */}
-            <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl flex items-center justify-between">
+            <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl space-y-3">
               <div>
                 <h4 className="text-xs font-bold text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
                   <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                  Export &amp; Local Auto-Backup
+                  Data Backups &amp; Local Restore
                 </h4>
-                <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300 mt-0.5">
-                  Automated weekly backups to local path + CSV spreadsheet reports
+                <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300 mt-0.5 leading-relaxed">
+                  Restore directly from any local backup file (.json) on your device, or download automated weekly snapshots &amp; CSV reports.
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenExportModal?.();
-                }}
-                className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-colors shrink-0"
-              >
-                Backups &amp; Export
-              </button>
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenExportModal?.('localfile');
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Restore from Local File</span>
+                </button>
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenExportModal?.('autobackup');
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold text-emerald-900 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-900/50 hover:bg-emerald-200 dark:hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                  <span>Snapshots &amp; Export</span>
+                </button>
+              </div>
             </div>
 
             {/* Survival Runway Baseline Link */}
@@ -310,55 +324,112 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {activeSettingsTab === 'targets' && (
           <div className="mt-4 space-y-4">
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Customize the monthly funding requirement for each envelope. These targets determine how incoming job payments are split.
+              Customize the monthly funding requirement for each envelope. You can enter a percentage or a direct Naira amount—both columns automatically update each other.
             </p>
-            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-              {envelopes.map((envelope) => (
-                <div
-                  key={envelope.id}
-                  className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40"
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="w-3 h-3 rounded-full shrink-0"
-                      style={{ backgroundColor: envelope.color }}
-                    />
-                    <div>
-                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block">
-                        {envelope.name}
-                      </span>
-                      {envelope.isEssentialForSurvival && (
-                        <span className="text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-1 py-0.2 rounded font-medium">
-                          Survival Essential
-                        </span>
-                      )}
+            {(() => {
+              const totalMonthlyTarget = envelopes.reduce((sum, e) => sum + e.monthlyTarget, 0);
+
+              return (
+                <>
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400 px-3 pb-1 border-b border-slate-100 dark:border-slate-800">
+                    <span>Envelope</span>
+                    <div className="flex items-center gap-6 pr-1">
+                      <span className="w-16 text-right">% of Total</span>
+                      <span className="w-24 text-right">Need (₦)</span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-400">₦</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1000"
-                      value={envelope.monthlyTarget}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        onUpdateTarget(envelope.id, isNaN(val) ? 0 : Math.max(0, val));
-                      }}
-                      className="w-24 text-xs font-bold text-right px-2 py-1 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                  <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                    {envelopes.map((envelope) => {
+                      const currentPct =
+                        totalMonthlyTarget > 0
+                          ? ((envelope.monthlyTarget / totalMonthlyTarget) * 100).toFixed(1).replace(/\.0$/, '')
+                          : '0';
 
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold text-slate-900 dark:text-slate-100">
-              <span>Total Monthly Target Requirement:</span>
-              <span>
-                {formatNaira(envelopes.reduce((sum, e) => sum + e.monthlyTarget, 0))}
-              </span>
-            </div>
+                      return (
+                        <div
+                          key={envelope.id}
+                          className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40"
+                        >
+                          <div className="flex items-center gap-2 min-w-0 pr-2">
+                            <span
+                              className="w-3 h-3 rounded-full shrink-0"
+                              style={{ backgroundColor: envelope.color }}
+                            />
+                            <div className="truncate">
+                              <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block truncate">
+                                {envelope.name}
+                              </span>
+                              {envelope.isEssentialForSurvival && (
+                                <span className="text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-1 py-0.2 rounded font-medium">
+                                  Survival Essential
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 shrink-0">
+                            {/* Percentage Column */}
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.5"
+                                placeholder="0"
+                                defaultValue={currentPct}
+                                key={`${envelope.id}-${currentPct}`}
+                                onBlur={(e) => {
+                                  const pct = parseFloat(e.target.value);
+                                  if (!isNaN(pct) && totalMonthlyTarget > 0) {
+                                    const computedNeed = Math.round((pct / 100) * totalMonthlyTarget);
+                                    onUpdateTarget(envelope.id, Math.max(0, computedNeed));
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const pct = parseFloat((e.target as HTMLInputElement).value);
+                                    if (!isNaN(pct) && totalMonthlyTarget > 0) {
+                                      const computedNeed = Math.round((pct / 100) * totalMonthlyTarget);
+                                      onUpdateTarget(envelope.id, Math.max(0, computedNeed));
+                                    }
+                                  }
+                                }}
+                                className="w-16 text-xs font-bold text-right px-2 py-1 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                title="Enter percentage to automatically update the Need column"
+                              />
+                              <span className="text-xs text-slate-400 font-semibold">%</span>
+                            </div>
+
+                            {/* Need (₦) Column */}
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-slate-400">₦</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1000"
+                                value={envelope.monthlyTarget}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  onUpdateTarget(envelope.id, isNaN(val) ? 0 : Math.max(0, val));
+                                }}
+                                className="w-24 text-xs font-bold text-right px-2 py-1 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                title="Monthly Target Need (₦)"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold text-slate-900 dark:text-slate-100">
+                    <span>Total Monthly Target Requirement:</span>
+                    <span>{formatNaira(totalMonthlyTarget)}</span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 

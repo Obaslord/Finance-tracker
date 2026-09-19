@@ -1,5 +1,5 @@
-import { AlertCircle, Check, CheckCircle2, ChevronRight, Sparkles, X } from 'lucide-react';
-import React, { useState } from 'react';
+import { AlertCircle, Check, CheckCircle2, ChevronRight, Percent, Sparkles, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
 import { Envelope, Job, Milestone } from '../types';
 import { formatNaira, formatPercent } from '../utils/formatters';
 
@@ -35,8 +35,8 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
   const taxAmount = Math.round(grossAmount * 0.1);
   const netAmount = grossAmount - taxAmount;
 
-  // Track allocation per envelope
-  const [allocations, setAllocations] = useState<Record<string, number>>(() => {
+  // Initial prioritized allocation calculation
+  const initialAllocations = useMemo(() => {
     const initial: Record<string, number> = {};
     let remaining = netAmount;
 
@@ -61,47 +61,125 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
     }
 
     return initial;
+  }, [envelopes, netAmount]);
+
+  // Track allocation per envelope in Naira
+  const [allocations, setAllocations] = useState<Record<string, number>>(initialAllocations);
+
+  // Track user-entered percentage per envelope (allows flexible typing like "50", "33.3")
+  const [percentInputs, setPercentInputs] = useState<Record<string, string>>(() => {
+    const initialPct: Record<string, string> = {};
+    for (const env of envelopes) {
+      const alloc = initialAllocations[env.id] || 0;
+      if (netAmount > 0 && alloc > 0) {
+        initialPct[env.id] = ((alloc / netAmount) * 100).toFixed(1).replace(/\.0$/, '');
+      } else {
+        initialPct[env.id] = '';
+      }
+    }
+    return initialPct;
   });
 
   const totalAllocated = Object.values(allocations).reduce((sum, val) => sum + (val || 0), 0);
+  const totalAllocatedPct = netAmount > 0 ? (totalAllocated / netAmount) * 100 : 0;
   const unallocatedBuffer = Math.max(0, netAmount - totalAllocated);
+  const unallocatedBufferPct = netAmount > 0 ? (unallocatedBuffer / netAmount) * 100 : 0;
   const isOverAllocated = totalAllocated > netAmount;
 
+  // Direct editing of the Need Naira (₦) column
   const handleAllocationChange = (envId: string, valStr: string) => {
     const val = parseFloat(valStr) || 0;
+    const safeVal = Math.max(0, val);
     setAllocations((prev) => ({
       ...prev,
-      [envId]: Math.max(0, val),
+      [envId]: safeVal,
     }));
+
+    // Synchronize the percentage column
+    if (netAmount > 0 && safeVal > 0) {
+      const pct = ((safeVal / netAmount) * 100).toFixed(1).replace(/\.0$/, '');
+      setPercentInputs((prev) => ({ ...prev, [envId]: pct }));
+    } else {
+      setPercentInputs((prev) => ({ ...prev, [envId]: '' }));
+    }
+  };
+
+  // Editing of the % of Net column (User Issue 3)
+  const handlePercentChange = (envId: string, pctStr: string) => {
+    setPercentInputs((prev) => ({
+      ...prev,
+      [envId]: pctStr,
+    }));
+
+    if (pctStr.trim() === '') {
+      setAllocations((prev) => ({
+        ...prev,
+        [envId]: 0,
+      }));
+      return;
+    }
+
+    const pct = parseFloat(pctStr);
+    if (!isNaN(pct)) {
+      // Automatically load into the need Naira column while remaining flexible
+      const naira = Math.max(0, Math.round((pct / 100) * netAmount));
+      setAllocations((prev) => ({
+        ...prev,
+        [envId]: naira,
+      }));
+    }
+  };
+
+  // Fill exact remaining deficit for monthly target
+  const handleFillNeed = (env: Envelope) => {
+    const neededToMax = Math.max(0, env.monthlyTarget - env.currentBalance);
+    setAllocations((prev) => ({
+      ...prev,
+      [env.id]: neededToMax,
+    }));
+
+    if (netAmount > 0 && neededToMax > 0) {
+      const pct = ((neededToMax / netAmount) * 100).toFixed(1).replace(/\.0$/, '');
+      setPercentInputs((prev) => ({ ...prev, [env.id]: pct }));
+    } else {
+      setPercentInputs((prev) => ({ ...prev, [env.id]: '' }));
+    }
   };
 
   const handleAutoFillSurvival = () => {
-    const updated: Record<string, number> = {};
+    const updatedAlloc: Record<string, number> = {};
+    const updatedPct: Record<string, string> = {};
     let remaining = netAmount;
 
     for (const env of envelopes.filter((e) => e.isEssentialForSurvival)) {
       const deficit = Math.max(0, env.monthlyTarget - env.currentBalance);
       const alloc = Math.min(deficit, remaining);
-      updated[env.id] = alloc;
+      updatedAlloc[env.id] = alloc;
       remaining -= alloc;
+      updatedPct[env.id] = netAmount > 0 && alloc > 0 ? ((alloc / netAmount) * 100).toFixed(1).replace(/\.0$/, '') : '';
     }
 
     for (const env of envelopes.filter((e) => !e.isEssentialForSurvival)) {
       const deficit = Math.max(0, env.monthlyTarget - env.currentBalance);
       const alloc = Math.min(deficit, remaining);
-      updated[env.id] = alloc;
+      updatedAlloc[env.id] = alloc;
       remaining -= alloc;
+      updatedPct[env.id] = netAmount > 0 && alloc > 0 ? ((alloc / netAmount) * 100).toFixed(1).replace(/\.0$/, '') : '';
     }
 
-    setAllocations(updated);
+    setAllocations(updatedAlloc);
+    setPercentInputs(updatedPct);
   };
 
   const handleSendAllToBuffer = () => {
-    const zeroed: Record<string, number> = {};
+    const zeroedAlloc: Record<string, number> = {};
+    const zeroedPct: Record<string, string> = {};
     for (const env of envelopes) {
-      zeroed[env.id] = 0;
+      zeroedAlloc[env.id] = 0;
+      zeroedPct[env.id] = '';
     }
-    setAllocations(zeroed);
+    setAllocations(zeroedAlloc);
+    setPercentInputs(zeroedPct);
   };
 
   const handleConfirm = () => {
@@ -120,7 +198,7 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 my-8 transition-colors">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 my-8 transition-colors">
         <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
           <div>
             <div className="flex items-center gap-2">
@@ -158,9 +236,14 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
         </div>
 
         <div className="flex items-center justify-between mt-5 mb-2">
-          <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-            Distribute to Envelopes
-          </h4>
+          <div>
+            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+              Distribute to Envelopes
+            </h4>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              Enter a percentage (%) or type amount directly in Naira (₦). Both stay flexible.
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleAutoFillSurvival}
@@ -178,15 +261,26 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
           </div>
         </div>
 
-        <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+        {/* Column Headers for clarity */}
+        <div className="hidden sm:flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-3 pb-1 border-b border-slate-100 dark:border-slate-800">
+          <span>Envelope &amp; Need</span>
+          <div className="flex items-center gap-2">
+            <span className="w-20 text-center">% of Net</span>
+            <span className="w-28 text-center">Need Naira (₦)</span>
+            <span className="w-16 text-center">Action</span>
+          </div>
+        </div>
+
+        <div className="space-y-2 max-h-72 overflow-y-auto pr-1 mt-1">
           {envelopes.map((env) => {
             const currentAlloc = allocations[env.id] || 0;
+            const currentPct = percentInputs[env.id] ?? '';
             const neededToMax = Math.max(0, env.monthlyTarget - env.currentBalance);
 
             return (
               <div
                 key={env.id}
-                className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-850 hover:bg-slate-50/60 dark:hover:bg-slate-800 transition-colors"
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-850 hover:bg-slate-50/60 dark:hover:bg-slate-800 transition-colors"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -208,7 +302,7 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                     <span>Now: {formatNaira(env.currentBalance)}</span>
                     <span>•</span>
                     <span className={neededToMax > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-emerald-600 dark:text-emerald-400'}>
-                      {neededToMax > 0 ? `Needs ${formatNaira(neededToMax)}` : 'Full Target Met'}
+                      {neededToMax > 0 ? `Target gap ${formatNaira(neededToMax)}` : 'Full Target Met'}
                     </span>
                     {env.savingsGoal && (
                       <>
@@ -221,26 +315,46 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleAllocationChange(env.id, neededToMax.toString())}
-                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950/50 rounded"
-                    title="Fill exactly what's needed for this month's target"
-                  >
-                    Fill Need
-                  </button>
+                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                  {/* % of Net Column (User Issue 3) */}
+                  <div className="relative w-20">
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      max="100"
+                      value={currentPct}
+                      placeholder="0"
+                      onChange={(e) => handlePercentChange(env.id, e.target.value)}
+                      className="w-full pl-2 pr-6 py-1.5 text-xs font-semibold text-right bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      title="Enter percentage of Net to allocate"
+                    />
+                    <span className="absolute right-2 top-2 text-slate-400 text-xs font-semibold pointer-events-none">%</span>
+                  </div>
+
+                  {/* Need Naira (₦) Column (Flexible for direct edit) */}
                   <div className="relative w-28">
-                    <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs font-semibold">₦</span>
+                    <span className="absolute left-2.5 top-2 text-slate-400 text-xs font-semibold pointer-events-none">₦</span>
                     <input
                       type="number"
                       min="0"
                       value={currentAlloc === 0 ? '' : currentAlloc}
                       placeholder="0"
                       onChange={(e) => handleAllocationChange(env.id, e.target.value)}
-                      className="w-full pl-6 pr-2 py-1 text-sm font-semibold text-right bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full pl-6 pr-2 py-1.5 text-xs font-semibold text-right bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      title="Allocation amount in Naira (flexible)"
                     />
                   </div>
+
+                  {/* Fill Need Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleFillNeed(env)}
+                    className="w-16 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-1.5 py-1.5 bg-blue-50 dark:bg-blue-950/50 rounded-lg transition-colors text-center"
+                    title="Fill exactly what's needed for this month's target"
+                  >
+                    Fill Need
+                  </button>
                 </div>
               </div>
             );
@@ -250,23 +364,29 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-600 dark:text-slate-400">Total Assigned to Envelopes:</span>
-            <span className="font-bold text-slate-900 dark:text-slate-100">{formatNaira(totalAllocated)}</span>
+            <div className="text-right">
+              <span className="font-bold text-slate-900 dark:text-slate-100">{formatNaira(totalAllocated)}</span>
+              <span className="text-slate-500 dark:text-slate-400 ml-1.5 font-semibold">({formatPercent(Math.round(totalAllocatedPct))} of Net)</span>
+            </div>
           </div>
 
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-600 dark:text-slate-400">
               Remaining to Survival Emergency Buffer:
             </span>
-            <span className="font-bold text-emerald-700 dark:text-emerald-400">
-              {formatNaira(unallocatedBuffer)}
-            </span>
+            <div className="text-right">
+              <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                {formatNaira(unallocatedBuffer)}
+              </span>
+              <span className="text-emerald-600/80 dark:text-emerald-400/80 ml-1.5 font-semibold">({formatPercent(Math.round(unallocatedBufferPct))})</span>
+            </div>
           </div>
 
           {isOverAllocated && (
             <div className="flex items-center gap-1.5 text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 p-2 rounded-lg">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>
-                You have allocated {formatNaira(totalAllocated - netAmount)} more than the net payment of {formatNaira(netAmount)}. Please adjust.
+                You have allocated {formatNaira(totalAllocated - netAmount)} ({formatPercent(Math.round(totalAllocatedPct))} - exceeds 100%) more than the net payment of {formatNaira(netAmount)}. Please adjust.
               </span>
             </div>
           )}

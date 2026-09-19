@@ -41,6 +41,8 @@ export interface Envelope {
   iconName: string;
   color: string;
   savingsGoal?: SavingsGoal;
+  cumulativeAllocated?: number; // Total funds allocated/saved to this envelope (preserved across spending)
+  monthlyAllocated?: number; // Total allocated in current 30-day month cycle
 }
 
 export interface ExpenseRecord {
@@ -94,6 +96,20 @@ export interface BackupSnapshot {
   state: AppState;
 }
 
+export interface CycleRolloverRecord {
+  id: string;
+  cycleNumber: number;
+  startDate: string;
+  endDate: string;
+  totalSweptToBuffer: number;
+  envelopesSwept: {
+    envelopeId: string;
+    envelopeName: string;
+    sweptAmount: number;
+  }[];
+  date: string;
+}
+
 export interface AppState {
   jobs: Job[];
   envelopes: Envelope[];
@@ -106,4 +122,7 @@ export interface AppState {
   backupSnapshots?: BackupSnapshot[];
   hideDemoButton?: boolean;
   theme?: AppTheme;
+  budgetCycleStartDate?: string; // ISO date of active 30-day cycle
+  budgetCycleNumber?: number; // 1, 2, 3...
+  cycleRolloverHistory?: CycleRolloverRecord[];
 }

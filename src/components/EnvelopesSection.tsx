@@ -1,4 +1,7 @@
 import {
+  AlertCircle,
+  AlertOctagon,
+  AlertTriangle,
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
@@ -19,6 +22,7 @@ import {
   Minus,
   Pencil,
   Plus,
+  RefreshCw,
   ShieldAlert,
   Sparkles,
   Target,
@@ -32,7 +36,7 @@ import {
   Zap,
 } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
-import { Envelope, SavingsGoal } from '../types';
+import { Envelope, ExpenseRecord, PaymentReceipt, SavingsGoal } from '../types';
 import { exportEnvelopesToCsv } from '../utils/exportData';
 import { formatNaira, formatPercent } from '../utils/formatters';
 import { EnvelopeEditorModal } from './EnvelopeEditorModal';
@@ -57,6 +61,12 @@ const ICON_MAP: Record<string, LucideIcon> = {
 export interface EnvelopesSectionProps {
   envelopes: Envelope[];
   survivalBufferCash: number;
+  expenseHistory?: ExpenseRecord[];
+  paymentReceipts?: PaymentReceipt[];
+  budgetCycleStartDate?: string;
+  budgetCycleNumber?: number;
+  onTriggerCycleRollover?: () => void;
+  onOpenBufferReallocate?: () => void;
   onSpendFromEnvelope: (envelopeId: string, amount: number, note: string) => void;
   onTransferFunds: (sourceId: string, targetId: string, amount: number) => void;
   onAdjustTarget: (envelopeId: string, newTarget: number) => void;
@@ -70,6 +80,12 @@ export interface EnvelopesSectionProps {
 export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   envelopes,
   survivalBufferCash,
+  expenseHistory = [],
+  paymentReceipts = [],
+  budgetCycleStartDate,
+  budgetCycleNumber = 1,
+  onTriggerCycleRollover,
+  onOpenBufferReallocate,
   onSpendFromEnvelope,
   onTransferFunds,
   onAdjustTarget,
@@ -108,6 +124,9 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   // Delete confirmation state
   const [deletingEnvelopeId, setDeletingEnvelopeId] = useState<string | null>(null);
 
+  // Manual 30-day rollover confirmation state
+  const [isConfirmingRollover, setIsConfirmingRollover] = useState(false);
+
   // Savings Goal Modal state
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [selectedGoalEnvelope, setSelectedGoalEnvelope] = useState<Envelope | null>(null);
@@ -116,14 +135,87 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   const totalFunded = envelopes.reduce((sum, e) => sum + e.currentBalance, 0);
   const totalMonthlyTarget = envelopes.reduce((sum, e) => sum + e.monthlyTarget, 0);
 
-  // Savings Goals aggregated calculation
+  // 30-Day Budget Cycle calculations (Requirement: 30-day month cycle)
+  const cycleStartMs = budgetCycleStartDate ? new Date(budgetCycleStartDate).getTime() : Date.now();
+  const daysElapsed = Math.max(0, Math.floor((Date.now() - cycleStartMs) / (24 * 60 * 60 * 1000)));
+  const daysRemaining = Math.max(0, 30 - daysElapsed);
+  const cycleProgressPct = Math.min(100, Math.round((daysElapsed / 30) * 100));
+
+  // Current cycle expense calculations per envelope
+  const cycleExpensesMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!expenseHistory) return map;
+    for (const exp of expenseHistory) {
+      const expMs = new Date(exp.date).getTime();
+      if (expMs >= cycleStartMs) {
+        map.set(exp.envelopeId, (map.get(exp.envelopeId) || 0) + exp.amount);
+      }
+    }
+    return map;
+  }, [expenseHistory, cycleStartMs]);
+
+  // Aggregated expense calculations per envelope
+  const spentByEnvelopeMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!expenseHistory) return map;
+    for (const exp of expenseHistory) {
+      map.set(exp.envelopeId, (map.get(exp.envelopeId) || 0) + exp.amount);
+    }
+    return map;
+  }, [expenseHistory]);
+
+  // Envelopes approaching or at target limits in this cycle
+  const envelopesWithSpendingWarnings = useMemo(() => {
+    return envelopes.filter((e) => {
+      const spent = cycleExpensesMap.get(e.id) ?? (spentByEnvelopeMap.get(e.id) || 0);
+      const bench = e.monthlyTarget > 0 ? e.monthlyTarget : (e.monthlyAllocated || e.currentBalance + spent);
+      if (bench <= 0 || spent <= 0) return false;
+      const remPct = ((bench - spent) / bench) * 100;
+      return remPct <= 10 || spent >= bench;
+    });
+  }, [envelopes, cycleExpensesMap, spentByEnvelopeMap]);
+
+  // Aggregated receipt allocations per envelope
+  const receiptAllocationsMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!paymentReceipts) return map;
+    for (const receipt of paymentReceipts) {
+      if (receipt.allocatedAmounts) {
+        for (const [envId, amt] of Object.entries(receipt.allocatedAmounts)) {
+          map.set(envId, (map.get(envId) || 0) + (amt || 0));
+        }
+      }
+    }
+    return map;
+  }, [paymentReceipts]);
+
+  // Helper function to calculate total funds allocated/saved to an envelope.
+  // Persists across spending so envelopes with savings targets continue to read based on what has already been allocated.
+  const getEnvelopeSavedSoFar = (env: Envelope) => {
+    const spent = spentByEnvelopeMap.get(env.id) || 0;
+    const receiptAlloc = receiptAllocationsMap.get(env.id) || 0;
+    const directTotal = env.currentBalance + spent;
+    return Math.max(env.cumulativeAllocated || 0, directTotal, receiptAlloc);
+  };
+
+  const totalSpentAcrossEnvelopes = useMemo(() => {
+    let sum = 0;
+    for (const env of envelopes) {
+      sum += spentByEnvelopeMap.get(env.id) || 0;
+    }
+    return sum;
+  }, [envelopes, spentByEnvelopeMap]);
+
+  const totalRemainingTargetAcrossEnvelopes = Math.max(0, totalMonthlyTarget - totalFunded);
+
+  // Savings Goals aggregated calculation (persists based on total allocated/saved even after spend)
   const envelopesWithGoals = envelopes.filter((e) => !!e.savingsGoal);
   const totalGoalsTarget = envelopesWithGoals.reduce(
     (sum, e) => sum + (e.savingsGoal?.targetAmount || 0),
     0
   );
   const totalGoalsCurrent = envelopesWithGoals.reduce(
-    (sum, e) => sum + Math.min(e.currentBalance, e.savingsGoal?.targetAmount || 0),
+    (sum, e) => sum + Math.min(getEnvelopeSavedSoFar(e), e.savingsGoal?.targetAmount || 0),
     0
   );
   const overallGoalProgress =
@@ -224,7 +316,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Total monthly target: <strong>{formatNaira(totalMonthlyTarget)}</strong> • Cash currently funded: <strong>{formatNaira(totalFunded)}</strong>
+            Total target: <strong>{formatNaira(totalMonthlyTarget)}</strong> • Distributed: <strong>{formatNaira(totalFunded)}</strong> • Remaining target: <strong className={totalRemainingTargetAcrossEnvelopes > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>{formatNaira(totalRemainingTargetAcrossEnvelopes)}</strong> • Total spent: <strong className="text-rose-600 dark:text-rose-400">{formatNaira(totalSpentAcrossEnvelopes)}</strong>
           </p>
         </div>
 
@@ -287,6 +379,78 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               <Target className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Set Goal</span>
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 30-Day Budget Cycle & Reallocation Card (Requirement 4 & 5) */}
+      <div className="bg-gradient-to-br from-indigo-50/70 via-slate-50 to-blue-50/60 dark:from-indigo-950/40 dark:via-slate-900 dark:to-blue-950/30 border border-indigo-200/80 dark:border-indigo-900/60 rounded-2xl p-4 sm:p-5 transition-colors">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                <RefreshCw className="w-4 h-4" />
+              </div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                30-Day Budget Cycle #{budgetCycleNumber}
+              </h4>
+              <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300">
+                Day {daysElapsed + 1} of 30 • {daysRemaining} days left
+              </span>
+              {envelopesWithSpendingWarnings.length > 0 && (
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                  <span>{envelopesWithSpendingWarnings.length} target warning{envelopesWithSpendingWarnings.length === 1 ? '' : 's'}</span>
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
+              Every 30 days, unspent envelope balances automatically sweep back to your Cash in Hand / Survival Buffer.
+              Reallocation starts fresh for the new month based on cash on hand or incoming job payouts.
+            </p>
+          </div>
+
+          {/* Quick Action Buttons for 30-Day Cycle */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onOpenBufferReallocate && (
+              <button
+                type="button"
+                onClick={onOpenBufferReallocate}
+                className="px-3.5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+                title="Distribute available Cash in Hand to envelopes to meet this month's targets"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reallocate from Cash in Hand ({formatNaira(survivalBufferCash)})</span>
+              </button>
+            )}
+
+            {onTriggerCycleRollover && (
+              <button
+                type="button"
+                onClick={() => setIsConfirmingRollover(true)}
+                className="px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-colors border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 shadow-2xs"
+                title="Manually complete this 30-day cycle and sweep unspent envelope balances back to Cash in Hand"
+              >
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                <span>Rollover 30-Day Cycle</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Cycle Progress Bar */}
+        <div className="mt-3.5 pt-3 border-t border-indigo-100 dark:border-indigo-900/50">
+          <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-400 mb-1.5 font-medium">
+            <span>Cycle progress: {daysElapsed} of 30 days completed ({formatPercent(cycleProgressPct)})</span>
+            <span className={daysRemaining <= 3 ? 'text-amber-600 font-bold' : ''}>
+              {daysRemaining === 0 ? 'Cycle complete - Ready for rollover' : `${daysRemaining} days remaining until automatic sweep`}
+            </span>
+          </div>
+          <div className="h-2 w-full bg-slate-200/80 dark:bg-slate-800 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-indigo-500 to-blue-500"
+              style={{ width: `${cycleProgressPct}%` }}
+            />
           </div>
         </div>
       </div>
@@ -382,12 +546,14 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               {envelopesWithGoals.map((env) => {
                 const goal = env.savingsGoal!;
                 const Icon = ICON_MAP[env.iconName] || Wallet;
+                const savedSoFar = getEnvelopeSavedSoFar(env);
+                const amountSpent = spentByEnvelopeMap.get(env.id) || 0;
                 const pct =
                   goal.targetAmount > 0
-                    ? Math.min(100, Math.round((env.currentBalance / goal.targetAmount) * 100))
+                    ? Math.min(100, Math.round((savedSoFar / goal.targetAmount) * 100))
                     : 0;
-                const remaining = Math.max(0, goal.targetAmount - env.currentBalance);
-                const isAchieved = env.currentBalance >= goal.targetAmount;
+                const remaining = Math.max(0, goal.targetAmount - savedSoFar);
+                const isAchieved = savedSoFar >= goal.targetAmount;
 
                 return (
                   <div
@@ -429,24 +595,30 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                         </span>
                       </div>
 
-                      {/* Amounts Display */}
+                      {/* Amounts Display: Shows total allocated/saved towards target even after spending */}
                       <div className="mt-4 pt-2 border-t border-slate-100 dark:border-slate-800">
                         <div className="flex items-baseline justify-between">
                           <div>
-                            <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                              Current Balance
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold block">
+                              Total Saved / Allocated
                             </span>
-                            <p className="text-xl font-extrabold text-slate-900 dark:text-slate-100">
-                              {formatNaira(env.currentBalance)}
+                            <p className="text-xl font-extrabold text-blue-900 dark:text-blue-100">
+                              {formatNaira(savedSoFar)}
                             </p>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                              Cash: {formatNaira(env.currentBalance)} {amountSpent > 0 ? `• ${formatNaira(amountSpent)} spend logged` : ''}
+                            </span>
                           </div>
                           <div className="text-right">
-                            <span className="text-[10px] text-slate-400 uppercase font-semibold">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold block">
                               Target Goal
                             </span>
                             <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
                               {formatNaira(goal.targetAmount)}
                             </p>
+                            <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 block mt-0.5">
+                              {formatPercent(pct)} saved
+                            </span>
                           </div>
                         </div>
 
@@ -466,10 +638,12 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                           {isAchieved ? (
                             <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
                               <Trophy className="w-3 h-3" />
-                              Goal 100% Completed!
+                              Goal 100% Completed! ({formatNaira(savedSoFar)})
                             </span>
                           ) : (
-                            <span>{formatNaira(remaining)} remaining to target</span>
+                            <span className="text-slate-600 dark:text-slate-300 font-medium">
+                              {formatNaira(remaining)} remaining to target
+                            </span>
                           )}
 
                           {goal.targetDate && (
@@ -517,28 +691,81 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
           {envelopes.map((envelope) => {
             const Icon = ICON_MAP[envelope.iconName] || Wallet;
-            const monthlyPct =
-              envelope.monthlyTarget > 0
-                ? Math.min(100, Math.round((envelope.currentBalance / envelope.monthlyTarget) * 100))
-                : 0;
-            const isMonthlyFunded = envelope.currentBalance >= envelope.monthlyTarget;
-            const isLowMonthly = monthlyPct < 35;
+            const amountSpent = cycleExpensesMap.get(envelope.id) ?? (spentByEnvelopeMap.get(envelope.id) || 0);
 
-            // Long-term savings goal calculations
+            // Total allocated to this envelope in the current month:
+            // User rule: Once a target is reached for the month, the bar should automatically continually show target reached for that month, irrespective of whether the money has been spent or not.
+            const totalAllocatedThisMonth = Math.max(
+              envelope.monthlyAllocated || 0,
+              envelope.currentBalance + amountSpent
+            );
+
+            const isTargetReached = envelope.monthlyTarget > 0 && totalAllocatedThisMonth >= envelope.monthlyTarget;
+            const isOverAllocated = envelope.monthlyTarget > 0 && totalAllocatedThisMonth > envelope.monthlyTarget;
+            const overAllocatedAmount = Math.max(0, totalAllocatedThisMonth - envelope.monthlyTarget);
+            const remainingTargetToAllocate = Math.max(0, envelope.monthlyTarget - totalAllocatedThisMonth);
+            const targetAllocationPct = envelope.monthlyTarget > 0
+              ? Math.min(100, Math.round((totalAllocatedThisMonth / envelope.monthlyTarget) * 100))
+              : 0;
+            const isLowMonthly = !isTargetReached && targetAllocationPct < 35;
+
+            // BAR 2: Spending reads against the monthly target! (e.g. 40,000)
+            // User rule:
+            // "the spending should continue to read for the 40,000 naira target.
+            // Immediately it has reached 40k ir target, the envelope should give a warning that spending has reached target.
+            // It means the spending has reached target for that month. So it will bring a warning to show that spending
+            // has reached maybe 10% to the target, 5% to the target, 3% to the target, 1% to the target, till that spending has reached target."
+            const budgetBenchmark = envelope.monthlyTarget > 0 ? envelope.monthlyTarget : totalAllocatedThisMonth;
+            const spentPctOfTarget = budgetBenchmark > 0 ? Math.round((amountSpent / budgetBenchmark) * 100) : 0;
+            const remainingSpendToTarget = budgetBenchmark - amountSpent;
+            const pctRemainingToTarget = budgetBenchmark > 0 ? ((budgetBenchmark - amountSpent) / budgetBenchmark) * 100 : 0;
+
+            let warningLevel: 'normal' | 'within_10' | 'within_5' | 'within_3' | 'within_1' | 'reached' | 'exceeded' = 'normal';
+            let warningMessage = '';
+
+            if (budgetBenchmark > 0 && amountSpent > 0) {
+              if (amountSpent > budgetBenchmark) {
+                warningLevel = 'exceeded';
+                warningMessage = `Spending exceeded monthly target by ${formatNaira(amountSpent - budgetBenchmark)}!`;
+              } else if (amountSpent === budgetBenchmark) {
+                warningLevel = 'reached';
+                warningMessage = `Spending has reached target for this month (${formatNaira(budgetBenchmark)})!`;
+              } else if (pctRemainingToTarget <= 1) {
+                warningLevel = 'within_1';
+                warningMessage = `Spending has reached within 1% of target (${formatNaira(remainingSpendToTarget)} left)!`;
+              } else if (pctRemainingToTarget <= 3) {
+                warningLevel = 'within_3';
+                warningMessage = `Spending has reached within 3% of target (${formatNaira(remainingSpendToTarget)} left)!`;
+              } else if (pctRemainingToTarget <= 5) {
+                warningLevel = 'within_5';
+                warningMessage = `Spending has reached within 5% of target (${formatNaira(remainingSpendToTarget)} left)!`;
+              } else if (pctRemainingToTarget <= 10) {
+                warningLevel = 'within_10';
+                warningMessage = `Spending has reached within 10% of target (${formatNaira(remainingSpendToTarget)} left)!`;
+              }
+            }
+
+            // Long-term savings goal calculations:
+            // Persists based on what has already been allocated to it, even after spending has been logged!
             const goal = envelope.savingsGoal;
+            const savedTowardsGoal = getEnvelopeSavedSoFar(envelope);
             const goalPct =
               goal && goal.targetAmount > 0
-                ? Math.min(100, Math.round((envelope.currentBalance / goal.targetAmount) * 100))
+                ? Math.min(100, Math.round((savedTowardsGoal / goal.targetAmount) * 100))
                 : 0;
-            const isGoalAchieved = goal ? envelope.currentBalance >= goal.targetAmount : false;
-            const goalRemaining = goal ? Math.max(0, goal.targetAmount - envelope.currentBalance) : 0;
+            const isGoalAchieved = goal ? savedTowardsGoal >= goal.targetAmount : false;
+            const goalRemaining = goal ? Math.max(0, goal.targetAmount - savedTowardsGoal) : 0;
 
             return (
               <div
                 key={envelope.id}
                 className={`relative group border rounded-2xl p-4 transition-all duration-200 hover:shadow-xs flex flex-col justify-between ${
-                  isMonthlyFunded
-                    ? 'border-emerald-200/80 dark:border-emerald-800/60 bg-emerald-50/20 dark:bg-emerald-950/20'
+                  warningLevel === 'exceeded' || warningLevel === 'reached'
+                    ? 'border-rose-300 dark:border-rose-800 bg-rose-50/15 dark:bg-rose-950/20'
+                    : warningLevel === 'within_1' || warningLevel === 'within_3'
+                    ? 'border-orange-300 dark:border-orange-800 bg-orange-50/10 dark:bg-orange-950/20'
+                    : isTargetReached
+                    ? 'border-emerald-300/90 dark:border-emerald-700/80 bg-emerald-50/20 dark:bg-emerald-950/20'
                     : isLowMonthly
                     ? 'border-rose-200/80 dark:border-rose-800/60 bg-rose-50/10 dark:bg-rose-950/20'
                     : 'border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900'
@@ -583,7 +810,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
 
                       <span
                         className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                          isMonthlyFunded
+                          isTargetReached
                             ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100/60 dark:bg-emerald-950/50'
                             : isLowMonthly
                             ? 'text-rose-700 dark:text-rose-300 bg-rose-100/60 dark:bg-rose-950/50'
@@ -591,7 +818,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                         }`}
                         title="Monthly target funding percentage"
                       >
-                        {formatPercent(monthlyPct)}
+                        {formatPercent(targetAllocationPct)}
                       </span>
                     </div>
                   </div>
@@ -712,19 +939,136 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                     </div>
                   </div>
 
-                  {/* Monthly target progress line */}
-                  <div className="mt-2.5 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${monthlyPct}%`,
-                        backgroundColor: isMonthlyFunded
-                          ? '#10B981'
-                          : isLowMonthly
-                          ? '#EF4444'
-                          : envelope.color,
-                      }}
-                    />
+                  {/* BAR 1: Target Allocation & Remaining Target Bar (Persistent Target Reached) */}
+                  <div className="mt-3 p-2.5 rounded-xl bg-slate-50/90 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <Target className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span>Target Allocation</span>
+                      </span>
+                      {isTargetReached ? (
+                        <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Target reached ✓</span>
+                          {isOverAllocated && (
+                            <span className="text-[10px] text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950 px-1 py-0.2 rounded font-extrabold">
+                              +{formatNaira(overAllocatedAmount)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                          {formatNaira(remainingTargetToAllocate)} left to allocate
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Bar track */}
+                    <div className="h-2 w-full bg-slate-200/80 dark:bg-slate-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${isTargetReached ? 100 : targetAllocationPct}%`,
+                          backgroundColor: isTargetReached ? '#10B981' : isLowMonthly ? '#EF4444' : envelope.color,
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                      <span>Allocated: {formatNaira(totalAllocatedThisMonth)}</span>
+                      <span>
+                        Target: {formatNaira(envelope.monthlyTarget)} ({isTargetReached ? '100% funded' : formatPercent(targetAllocationPct)})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* BAR 2: Amount Spent & Graded Spending Warnings relative to Monthly Target */}
+                  <div className={`mt-2 p-2.5 rounded-xl border space-y-1.5 transition-colors ${
+                    warningLevel === 'exceeded' || warningLevel === 'reached'
+                      ? 'bg-rose-50/90 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60'
+                      : warningLevel === 'within_1' || warningLevel === 'within_3'
+                      ? 'bg-orange-50/90 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900/60'
+                      : warningLevel === 'within_5' || warningLevel === 'within_10'
+                      ? 'bg-amber-50/90 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/60'
+                      : 'bg-slate-50/90 dark:bg-slate-800/50 border-slate-200/70 dark:border-slate-800'
+                  }`}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <CreditCard className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        <span>Amount Spent</span>
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-slate-900 dark:text-slate-100">
+                          {formatNaira(amountSpent)} / {formatNaira(budgetBenchmark)}
+                        </span>
+                        {warningLevel !== 'normal' && (
+                          <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full ${
+                            warningLevel === 'exceeded'
+                              ? 'bg-rose-600 text-white'
+                              : warningLevel === 'reached'
+                              ? 'bg-rose-600 text-white'
+                              : warningLevel === 'within_1'
+                              ? 'bg-orange-600 text-white'
+                              : warningLevel === 'within_3'
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-amber-500 text-white'
+                          }`}>
+                            {warningLevel === 'exceeded'
+                              ? 'Over Budget'
+                              : warningLevel === 'reached'
+                              ? 'Target Reached'
+                              : warningLevel === 'within_1'
+                              ? '1% to Target'
+                              : warningLevel === 'within_3'
+                              ? '3% to Target'
+                              : warningLevel === 'within_5'
+                              ? '5% to Target'
+                              : '10% to Target'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bar track */}
+                    <div className="h-2 w-full bg-slate-200/80 dark:bg-slate-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.min(100, spentPctOfTarget)}%`,
+                          backgroundColor:
+                            warningLevel === 'exceeded' || warningLevel === 'reached'
+                              ? '#EF4444'
+                              : warningLevel === 'within_1' || warningLevel === 'within_3'
+                              ? '#F97316'
+                              : warningLevel === 'within_5' || warningLevel === 'within_10'
+                              ? '#F59E0B'
+                              : '#6366F1',
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] font-medium">
+                      <span className={envelope.currentBalance > 0 ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-slate-400'}>
+                        {formatNaira(envelope.currentBalance)} balance left in envelope
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        {amountSpent > 0 ? `${formatPercent(spentPctOfTarget)} of target spent` : '₦0 spent so far'}
+                      </span>
+                    </div>
+
+                    {/* Proactive Progressive Warning Alert Banner */}
+                    {warningLevel !== 'normal' && (
+                      <div className={`mt-1.5 p-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 ${
+                        warningLevel === 'exceeded' || warningLevel === 'reached'
+                          ? 'bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200'
+                          : warningLevel === 'within_1' || warningLevel === 'within_3'
+                          ? 'bg-orange-100 dark:bg-orange-900/60 text-orange-900 dark:text-orange-200'
+                          : 'bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200'
+                      }`}>
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="leading-tight">{warningMessage}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Integrated Long-Term Savings Goal Block */}
@@ -732,15 +1076,21 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                     <div className="mt-3 p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-blue-950 dark:text-blue-200 flex items-center gap-1 truncate max-w-[130px]" title={goal.title}>
-                          <Target className="w-3 h-3 text-blue-500 shrink-0" />
+                          <Target className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                           <span className="truncate">{goal.title || 'Savings Goal'}</span>
                         </span>
-                        <button
-                          onClick={() => handleOpenGoalModal(envelope)}
-                          className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline shrink-0"
-                        >
-                          {formatPercent(goalPct)}
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-900/60 px-1.5 py-0.5 rounded">
+                            {formatPercent(goalPct)}
+                          </span>
+                          <button
+                            onClick={() => handleOpenGoalModal(envelope)}
+                            className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline ml-0.5"
+                            title="Edit savings goal"
+                          >
+                            Edit
+                          </button>
+                        </div>
                       </div>
 
                       {/* Goal progress bar */}
@@ -752,11 +1102,13 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between text-[10px] text-blue-900/80 dark:text-blue-300/80 mt-1 font-medium">
-                        <span>Goal: {formatNaira(goal.targetAmount)}</span>
+                        <span>
+                          Saved: <strong className="text-blue-950 dark:text-blue-100 font-bold">{formatNaira(savedTowardsGoal)}</strong>
+                        </span>
                         {isGoalAchieved ? (
-                          <span className="text-emerald-600 dark:text-emerald-400 font-bold">Done! 🎉</span>
+                          <span className="text-emerald-600 dark:text-emerald-400 font-bold">Goal Met! 🎉</span>
                         ) : (
-                          <span>-{formatNaira(goalRemaining)}</span>
+                          <span>Target: {formatNaira(goal.targetAmount)} ({formatNaira(goalRemaining)} left)</span>
                         )}
                       </div>
                     </div>
@@ -876,6 +1228,22 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                   onChange={(e) => setSpendNote(e.target.value)}
                   className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-slate-100"
                 />
+              </div>
+
+              {/* Envelope context stats */}
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 text-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                  <span>Previously Spent:</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-200">
+                    {formatNaira(spentByEnvelopeMap.get(activeSpendEnvelope.id) || 0)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                  <span>Balance After Spend:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {formatNaira(Math.max(0, activeSpendEnvelope.currentBalance - (parseFloat(spendAmount) || 0)))}
+                  </span>
+                </div>
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2">
@@ -1118,8 +1486,69 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
         }}
         selectedEnvelope={selectedGoalEnvelope}
         envelopes={envelopes}
+        expenseHistory={expenseHistory}
+        paymentReceipts={paymentReceipts}
         onSaveGoal={handleSaveGoal}
       />
+
+      {/* Manual 30-Day Budget Cycle Rollover Confirmation Modal */}
+      {isConfirmingRollover && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center gap-3 text-indigo-600 dark:text-indigo-400">
+              <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center shrink-0">
+                <Clock className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Complete 30-Day Budget Cycle?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Cycle #{budgetCycleNumber} • Day {daysElapsed + 1} of 30
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
+              <p>
+                <strong>What happens when you rollover:</strong>
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-slate-500 dark:text-slate-400">
+                <li>
+                  All remaining envelope balances (totaling <strong>{formatNaira(totalFunded)}</strong>) will automatically return to your <strong>Survival Buffer / Cash in Hand</strong>.
+                </li>
+                <li>
+                  Envelope balances reset so you can reallocate fresh for the new 30-day month based on cash on hand or new job income.
+                </li>
+                <li>
+                  Long-term savings goals will continue to remember all historical allocations and won't lose their accumulated progress!
+                </li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmingRollover(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsConfirmingRollover(false);
+                  if (onTriggerCycleRollover) onTriggerCycleRollover();
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Confirm Rollover & Sweep Funds</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
