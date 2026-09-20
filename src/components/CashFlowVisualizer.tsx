@@ -2,10 +2,12 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
+  Check,
   CheckCircle2,
   ChevronRight,
   Coins,
   DollarSign,
+  Download,
   Landmark,
   Layers,
   PieChart,
@@ -16,6 +18,8 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { Envelope, ExpenseRecord, PaymentReceipt } from '../types';
+import { calculateEnvelopeFunding } from '../utils/envelopeFunding';
+import { exportCashFlowAndCapitalVelocityToCsv } from '../utils/exportData';
 import { formatDate, formatNaira, formatTimeAgo } from '../utils/formatters';
 import { SpendingTrendVisualizer } from './SpendingTrendVisualizer';
 
@@ -63,6 +67,21 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
   const unplannedPercent = totalSpent > 0 ? Math.round((unplannedSpent / totalSpent) * 100) : 0;
   const plannedPercent = 100 - unplannedPercent;
 
+  const [csvSuccess, setCsvSuccess] = useState(false);
+
+  const handleDownloadCashFlowCsv = () => {
+    exportCashFlowAndCapitalVelocityToCsv({
+      receipts,
+      expenses,
+      envelopes,
+      survivalBufferCash,
+      taxReserve,
+      pendingPipelineAmount,
+    });
+    setCsvSuccess(true);
+    setTimeout(() => setCsvSuccess(false), 3000);
+  };
+
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-6 transition-colors">
       {/* Header with Title & Sub-tabs */}
@@ -74,7 +93,7 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Cash Flow & Capital Velocity
+                Cash Flow &amp; Capital Velocity
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 Visualizing how money flows from job milestones into tax, envelopes, and liquid cash
@@ -83,48 +102,72 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
           </div>
         </div>
 
-        {/* View Switcher */}
-        <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl text-xs font-semibold self-start sm:self-auto">
+        {/* View Switcher and Direct CSV Export */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl text-xs font-semibold">
+            <button
+              onClick={() => setActiveSubTab('pipeline')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeSubTab === 'pipeline'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Cash Flow Pipeline
+            </button>
+            <button
+              onClick={() => setActiveSubTab('spending_trends')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                activeSubTab === 'spending_trends'
+                  ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <TrendingDown className="w-3.5 h-3.5" />
+              <span>Spending Trends</span>
+            </button>
+            <button
+              onClick={() => setActiveSubTab('envelope_burn')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeSubTab === 'envelope_burn'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Envelope Burn &amp; Targets
+            </button>
+            <button
+              onClick={() => setActiveSubTab('recent_events')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeSubTab === 'recent_events'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Inflow vs Outflow History
+            </button>
+          </div>
+
           <button
-            onClick={() => setActiveSubTab('pipeline')}
-            className={`px-3 py-1.5 rounded-lg transition-all ${
-              activeSubTab === 'pipeline'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            onClick={handleDownloadCashFlowCsv}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors border ${
+              csvSuccess
+                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                : 'text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-200/60 dark:border-slate-700'
             }`}
+            title="Download complete Cash Flow & Capital Velocity CSV"
           >
-            Cash Flow Pipeline
-          </button>
-          <button
-            onClick={() => setActiveSubTab('spending_trends')}
-            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-              activeSubTab === 'spending_trends'
-                ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            <TrendingDown className="w-3.5 h-3.5" />
-            <span>Spending Trends</span>
-          </button>
-          <button
-            onClick={() => setActiveSubTab('envelope_burn')}
-            className={`px-3 py-1.5 rounded-lg transition-all ${
-              activeSubTab === 'envelope_burn'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            Envelope Burn & Targets
-          </button>
-          <button
-            onClick={() => setActiveSubTab('recent_events')}
-            className={`px-3 py-1.5 rounded-lg transition-all ${
-              activeSubTab === 'recent_events'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            Inflow vs Outflow History
+            {csvSuccess ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Downloaded!</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden sm:inline">Export CSV</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -427,10 +470,8 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
 
           <div className="space-y-2.5">
             {envelopes.map((env) => {
-              const envSpent = expenses
-                .filter((e) => e.envelopeId === env.id)
-                .reduce((s, e) => s + e.amount, 0);
-              const fundedPct = Math.min(100, Math.round((env.currentBalance / env.monthlyTarget) * 100));
+              const funding = calculateEnvelopeFunding(env, expenses);
+              const isTargetReached = funding.isTargetReached;
 
               return (
                 <div
@@ -445,6 +486,11 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
                           Essential
                         </span>
                       )}
+                      {isTargetReached && (
+                        <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-bold">
+                          Target Reached ✓
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-slate-500 dark:text-slate-400">
@@ -454,7 +500,7 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
                         Balance: {formatNaira(env.currentBalance)}
                       </span>
                       <span className="text-rose-600 dark:text-rose-400 font-medium text-[11px]">
-                        Spent: {formatNaira(envSpent)}
+                        Spent: {formatNaira(funding.amountSpentThisCycle)}
                       </span>
                     </div>
                   </div>
@@ -462,13 +508,21 @@ export const CashFlowVisualizer: React.FC<CashFlowVisualizerProps> = ({
                   <div className="h-2 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-emerald-500 rounded-full transition-all"
-                      style={{ width: `${fundedPct}%` }}
+                      style={{ width: `${funding.fundingPercentage}%` }}
                     />
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>{fundedPct}% of monthly requirement funded</span>
-                    <span>Remaining to target: {formatNaira(Math.max(0, env.monthlyTarget - env.currentBalance))}</span>
+                    <span>
+                      {isTargetReached
+                        ? 'Target reached for this cycle'
+                        : `${funding.fundingPercentage}% of monthly requirement funded`}
+                    </span>
+                    <span>
+                      {isTargetReached
+                        ? 'Target met ✓'
+                        : `Remaining to target: ${formatNaira(funding.targetRemaining)}`}
+                    </span>
                   </div>
                 </div>
               );

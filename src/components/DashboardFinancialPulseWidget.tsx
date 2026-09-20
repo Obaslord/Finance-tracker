@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { Envelope, ExpenseRecord, GiftLog, PaymentReceipt } from '../types';
+import { calculateEnvelopeFunding, isEnvelopeUnderfunded } from '../utils/envelopeFunding';
 import { formatDate, formatNaira, formatPercent } from '../utils/formatters';
 
 interface DashboardFinancialPulseWidgetProps {
@@ -220,10 +221,10 @@ export const DashboardFinancialPulseWidget: React.FC<DashboardFinancialPulseWidg
 
   const totalTargetFundedThisMonth = useMemo(() => {
     return envelopes.reduce((sum, e) => {
-      const funded = e.monthlyAllocated !== undefined ? e.monthlyAllocated : e.currentBalance;
-      return sum + Math.min(e.monthlyTarget, Math.max(0, funded));
+      const funding = calculateEnvelopeFunding(e, expenses, budgetCycleStartDate);
+      return sum + Math.min(e.monthlyTarget, funding.totalFundedThisCycle);
     }, 0);
-  }, [envelopes]);
+  }, [envelopes, expenses, budgetCycleStartDate]);
 
   const totalTargetRemainingThisMonth = Math.max(0, totalMonthlyTargetNeeded - totalTargetFundedThisMonth);
 
@@ -232,15 +233,14 @@ export const DashboardFinancialPulseWidget: React.FC<DashboardFinancialPulseWidg
       ? Math.min(100, Math.round((totalTargetFundedThisMonth / totalMonthlyTargetNeeded) * 100))
       : 100;
 
-  const fullyFundedEnvelopesCount = useMemo(() => {
-    return envelopes.filter((e) => {
-      if (e.monthlyTarget <= 0) return true;
-      const funded = e.monthlyAllocated !== undefined ? e.monthlyAllocated : e.currentBalance;
-      return funded >= e.monthlyTarget;
-    }).length;
-  }, [envelopes]);
+  const envelopesNeedingFunding = useMemo(() => {
+    return envelopes
+      .filter((e) => isEnvelopeUnderfunded(e, expenses, budgetCycleStartDate))
+      .map((e) => calculateEnvelopeFunding(e, expenses, budgetCycleStartDate));
+  }, [envelopes, expenses, budgetCycleStartDate]);
 
-  const envelopesNeedingFundingCount = Math.max(0, envelopes.length - fullyFundedEnvelopesCount);
+  const envelopesNeedingFundingCount = envelopesNeedingFunding.length;
+  const fullyFundedEnvelopesCount = Math.max(0, envelopes.length - envelopesNeedingFundingCount);
 
   // Top spending envelopes this month
   const topSpendingEnvelopes = useMemo(() => {
@@ -683,29 +683,23 @@ export const DashboardFinancialPulseWidget: React.FC<DashboardFinancialPulseWidg
             <div className="mt-2 pt-2 border-t border-dashed border-amber-200 dark:border-amber-800/80 space-y-1.5 text-xs">
               {envelopesNeedingFundingCount === 0 ? (
                 <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> All envelopes have hit their targets this month!
+                  <CheckCircle2 className="w-3.5 h-3.5" /> All envelopes have reached their monthly targets!
                 </p>
               ) : (
-                envelopes
-                  .filter((e) => {
-                    const funded = e.monthlyAllocated !== undefined ? e.monthlyAllocated : e.currentBalance;
-                    return funded < e.monthlyTarget;
-                  })
-                  .map((env) => {
-                    const funded = env.monthlyAllocated !== undefined ? env.monthlyAllocated : env.currentBalance;
-                    const needed = Math.max(0, env.monthlyTarget - funded);
-                    return (
-                      <div key={env.id} className="flex items-center justify-between text-[11px]">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: env.color }} />
-                          <span className="font-semibold text-slate-700 dark:text-slate-300 truncate">{env.name}</span>
-                        </div>
-                        <span className="font-bold text-amber-700 dark:text-amber-300">
-                          needs {formatNaira(needed)}
-                        </span>
+                envelopesNeedingFunding.map((status) => {
+                  const env = status.envelope;
+                  return (
+                    <div key={env.id} className="flex items-center justify-between text-[11px]">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: env.color }} />
+                        <span className="font-semibold text-slate-700 dark:text-slate-300 truncate">{env.name}</span>
                       </div>
-                    );
-                  })
+                      <span className="font-bold text-amber-700 dark:text-amber-300">
+                        needs {formatNaira(status.targetRemaining)}
+                      </span>
+                    </div>
+                  );
+                })
               )}
             </div>
           )}

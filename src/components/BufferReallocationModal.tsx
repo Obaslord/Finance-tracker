@@ -1,6 +1,7 @@
 import { AlertCircle, CheckCircle2, RefreshCw, Sparkles, Wallet, X } from 'lucide-react';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Envelope } from '../types';
+import { calculateEnvelopeFunding } from '../utils/envelopeFunding';
 import { formatNaira, formatPercent } from '../utils/formatters';
 
 interface BufferReallocationModalProps {
@@ -20,8 +21,6 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
   cycleNumber = 1,
   onConfirmReallocation,
 }) => {
-  if (!isOpen) return null;
-
   // Maximum cash available to allocate
   const maxAvailable = Math.max(0, survivalBufferCash);
 
@@ -33,14 +32,14 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
     const sortedEnvelopes = [...envelopes].sort((a, b) => {
       if (a.isEssentialForSurvival && !b.isEssentialForSurvival) return -1;
       if (!a.isEssentialForSurvival && b.isEssentialForSurvival) return 1;
-      const defA = Math.max(0, a.monthlyTarget - (a.monthlyAllocated || a.currentBalance));
-      const defB = Math.max(0, b.monthlyTarget - (b.monthlyAllocated || b.currentBalance));
+      const defA = calculateEnvelopeFunding(a).targetRemaining;
+      const defB = calculateEnvelopeFunding(b).targetRemaining;
       return defB - defA;
     });
 
     for (const env of sortedEnvelopes) {
-      const alreadyAllocated = env.monthlyAllocated || env.currentBalance;
-      const deficit = Math.max(0, env.monthlyTarget - alreadyAllocated);
+      const funding = calculateEnvelopeFunding(env);
+      const deficit = funding.targetRemaining;
       if (deficit > 0 && remaining > 0) {
         const allocate = Math.min(deficit, remaining);
         initial[env.id] = allocate;
@@ -66,6 +65,23 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
     }
     return pcts;
   });
+
+  // Re-sync allocations when opened or when dependencies update
+  useEffect(() => {
+    if (isOpen) {
+      setAllocations(initialAllocations);
+      const pcts: Record<string, string> = {};
+      for (const env of envelopes) {
+        const alloc = initialAllocations[env.id] || 0;
+        if (maxAvailable > 0 && alloc > 0) {
+          pcts[env.id] = ((alloc / maxAvailable) * 100).toFixed(1).replace(/\.0$/, '');
+        } else {
+          pcts[env.id] = '';
+        }
+      }
+      setPercentInputs(pcts);
+    }
+  }, [isOpen, initialAllocations, envelopes, maxAvailable]);
 
   const totalAllocated = Object.values(allocations).reduce((sum, val) => sum + (val || 0), 0);
   const totalAllocatedPct = maxAvailable > 0 ? (totalAllocated / maxAvailable) * 100 : 0;
@@ -119,7 +135,8 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
     });
 
     for (const env of sorted) {
-      const deficit = Math.max(0, env.monthlyTarget - (env.monthlyAllocated || env.currentBalance));
+      const funding = calculateEnvelopeFunding(env);
+      const deficit = funding.targetRemaining;
       if (deficit > 0 && rem > 0) {
         const amt = Math.min(deficit, rem);
         nextAlloc[env.id] = amt;
@@ -151,6 +168,8 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
     onConfirmReallocation(allocations);
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
@@ -227,11 +246,12 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
             {/* Envelopes list */}
             <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50/40 dark:bg-slate-850/40">
               {envelopes.map((env) => {
-                const currentMonthAlloc = env.monthlyAllocated || env.currentBalance;
-                const deficit = Math.max(0, env.monthlyTarget - currentMonthAlloc);
+                const funding = calculateEnvelopeFunding(env);
+                const isTargetReached = funding.isTargetReached;
+                const deficit = funding.targetRemaining;
                 const currentVal = allocations[env.id] || 0;
-                const willReachTarget = currentMonthAlloc + currentVal >= env.monthlyTarget && env.monthlyTarget > 0;
-                const isOverAlloc = currentMonthAlloc + currentVal > env.monthlyTarget && env.monthlyTarget > 0;
+                const willReachTarget = isTargetReached || (funding.totalFundedThisCycle + currentVal >= env.monthlyTarget && env.monthlyTarget > 0);
+                const isOverAlloc = !isTargetReached && funding.totalFundedThisCycle + currentVal > env.monthlyTarget && env.monthlyTarget > 0;
 
                 return (
                   <div
@@ -253,17 +273,26 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
                               Survival
                             </span>
                           )}
+                          {isTargetReached && (
+                            <span className="text-[9px] font-bold uppercase px-1 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                              Target Met ✓
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                           <span>Target: {formatNaira(env.monthlyTarget)}</span>
                           <span>•</span>
-                          {deficit > 0 ? (
+                          {isTargetReached ? (
+                            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                              Target already met ✓
+                            </span>
+                          ) : deficit > 0 ? (
                             <span className="text-amber-600 dark:text-amber-400 font-medium">
                               Deficit: {formatNaira(deficit)}
                             </span>
                           ) : (
                             <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                              Target already met ✓
+                              Target met ✓
                             </span>
                           )}
                         </div>

@@ -1,6 +1,7 @@
 import { AlertCircle, Check, CheckCircle2, ChevronRight, Percent, Sparkles, X } from 'lucide-react';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Envelope, Job, Milestone } from '../types';
+import { calculateEnvelopeFunding } from '../utils/envelopeFunding';
 import { formatNaira, formatPercent } from '../utils/formatters';
 
 interface PaymentDistributorModalProps {
@@ -28,8 +29,6 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
   onClose,
   onConfirmPayout,
 }) => {
-  if (!isOpen) return null;
-
   const grossAmount = milestone ? milestone.amount : job.totalAmount;
   // 10% tax reserved
   const taxAmount = Math.round(grossAmount * 0.1);
@@ -44,13 +43,14 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
     const sortedEnvelopes = [...envelopes].sort((a, b) => {
       if (a.isEssentialForSurvival && !b.isEssentialForSurvival) return -1;
       if (!a.isEssentialForSurvival && b.isEssentialForSurvival) return 1;
-      const defA = Math.max(0, a.monthlyTarget - a.currentBalance);
-      const defB = Math.max(0, b.monthlyTarget - b.currentBalance);
+      const defA = calculateEnvelopeFunding(a).targetRemaining;
+      const defB = calculateEnvelopeFunding(b).targetRemaining;
       return defB - defA;
     });
 
     for (const env of sortedEnvelopes) {
-      const deficit = Math.max(0, env.monthlyTarget - env.currentBalance);
+      const funding = calculateEnvelopeFunding(env);
+      const deficit = funding.targetRemaining;
       if (deficit > 0 && remaining > 0) {
         const allocate = Math.min(deficit, remaining);
         initial[env.id] = allocate;
@@ -79,6 +79,23 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
     }
     return initialPct;
   });
+
+  // Re-sync allocations when opened or when dependencies change
+  useEffect(() => {
+    if (isOpen) {
+      setAllocations(initialAllocations);
+      const initialPct: Record<string, string> = {};
+      for (const env of envelopes) {
+        const alloc = initialAllocations[env.id] || 0;
+        if (netAmount > 0 && alloc > 0) {
+          initialPct[env.id] = ((alloc / netAmount) * 100).toFixed(1).replace(/\.0$/, '');
+        } else {
+          initialPct[env.id] = '';
+        }
+      }
+      setPercentInputs(initialPct);
+    }
+  }, [isOpen, initialAllocations, envelopes, netAmount]);
 
   const totalAllocated = Object.values(allocations).reduce((sum, val) => sum + (val || 0), 0);
   const totalAllocatedPct = netAmount > 0 ? (totalAllocated / netAmount) * 100 : 0;
@@ -132,7 +149,8 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
 
   // Fill exact remaining deficit for monthly target
   const handleFillNeed = (env: Envelope) => {
-    const neededToMax = Math.max(0, env.monthlyTarget - env.currentBalance);
+    const funding = calculateEnvelopeFunding(env);
+    const neededToMax = funding.targetRemaining;
     setAllocations((prev) => ({
       ...prev,
       [env.id]: neededToMax,
@@ -152,7 +170,8 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
     let remaining = netAmount;
 
     for (const env of envelopes.filter((e) => e.isEssentialForSurvival)) {
-      const deficit = Math.max(0, env.monthlyTarget - env.currentBalance);
+      const funding = calculateEnvelopeFunding(env);
+      const deficit = funding.targetRemaining;
       const alloc = Math.min(deficit, remaining);
       updatedAlloc[env.id] = alloc;
       remaining -= alloc;
@@ -160,7 +179,8 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
     }
 
     for (const env of envelopes.filter((e) => !e.isEssentialForSurvival)) {
-      const deficit = Math.max(0, env.monthlyTarget - env.currentBalance);
+      const funding = calculateEnvelopeFunding(env);
+      const deficit = funding.targetRemaining;
       const alloc = Math.min(deficit, remaining);
       updatedAlloc[env.id] = alloc;
       remaining -= alloc;
@@ -195,6 +215,8 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
     });
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
@@ -275,7 +297,9 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
           {envelopes.map((env) => {
             const currentAlloc = allocations[env.id] || 0;
             const currentPct = percentInputs[env.id] ?? '';
-            const neededToMax = Math.max(0, env.monthlyTarget - env.currentBalance);
+            const funding = calculateEnvelopeFunding(env);
+            const neededToMax = funding.targetRemaining;
+            const isTargetReached = funding.isTargetReached;
 
             return (
               <div
@@ -292,6 +316,11 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                         Survival
                       </span>
                     )}
+                    {isTargetReached && (
+                      <span className="text-[10px] bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded font-bold">
+                        Target Met ✓
+                      </span>
+                    )}
                     {env.savingsGoal && (
                       <span className="text-[10px] bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded font-medium truncate max-w-[120px]" title={env.savingsGoal.title}>
                         🎯 {env.savingsGoal.title || 'Goal'}
@@ -301,8 +330,8 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                   <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     <span>Now: {formatNaira(env.currentBalance)}</span>
                     <span>•</span>
-                    <span className={neededToMax > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-emerald-600 dark:text-emerald-400'}>
-                      {neededToMax > 0 ? `Target gap ${formatNaira(neededToMax)}` : 'Full Target Met'}
+                    <span className={isTargetReached ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : neededToMax > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-emerald-600 dark:text-emerald-400'}>
+                      {isTargetReached ? 'Target Met (Funded)' : neededToMax > 0 ? `Target gap ${formatNaira(neededToMax)}` : 'Full Target Met'}
                     </span>
                     {env.savingsGoal && (
                       <>
@@ -350,10 +379,11 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                   <button
                     type="button"
                     onClick={() => handleFillNeed(env)}
-                    className="w-16 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-1.5 py-1.5 bg-blue-50 dark:bg-blue-950/50 rounded-lg transition-colors text-center"
-                    title="Fill exactly what's needed for this month's target"
+                    disabled={isTargetReached && neededToMax === 0}
+                    className="w-16 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-1.5 py-1.5 bg-blue-50 dark:bg-blue-950/50 rounded-lg transition-colors text-center disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={isTargetReached ? 'Target already reached for this cycle' : "Fill exactly what's needed for this month's target"}
                   >
-                    Fill Need
+                    {isTargetReached ? 'Met ✓' : 'Fill Need'}
                   </button>
                 </div>
               </div>

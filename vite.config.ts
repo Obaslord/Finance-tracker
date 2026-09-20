@@ -1,13 +1,22 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import {defineConfig} from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
-    base: '/Finance-tracker/',
+    base: './',
     plugins: [
+      {
+        name: 'vite-hmr-send-guard',
+        transform(code: string, id: string) {
+          if (id.includes('vite/dist/client') || id.includes('@vite/client')) {
+            return code.replace(/ws\.send\(/g, 'ws?.send?.(');
+          }
+          return null;
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -21,7 +30,7 @@ export default defineConfig(() => {
           'pwa-maskable-512x512.png',
         ],
         manifest: {
-          id: '/Finance-tracker/',
+          id: '/',
           name: 'Obaslord Finance Tracker',
           short_name: 'Obaslord Fin',
           description:
@@ -30,23 +39,23 @@ export default defineConfig(() => {
           background_color: '#0f172a',
           display: 'standalone',
           orientation: 'portrait',
-          start_url: '/Finance-tracker/',
-          scope: '/Finance-tracker/',
+          start_url: '/',
+          scope: '/',
           icons: [
             {
-              src: 'pwa-192x192.png',
+              src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: 'pwa-512x512.png',
+              src: '/pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: 'pwa-maskable-512x512.png',
+              src: '/pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -57,8 +66,7 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],
@@ -69,7 +77,10 @@ export default defineConfig(() => {
       },
     },
     server: {
+      // HMR is disabled in AI Studio via DISABLE_HMR env var.
+      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

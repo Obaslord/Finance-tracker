@@ -1,6 +1,7 @@
 import { AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronUp, ShieldAlert, Sparkles, X } from 'lucide-react';
 import React, { useState } from 'react';
-import { Envelope } from '../types';
+import { Envelope, ExpenseRecord } from '../types';
+import { calculateEnvelopeFunding } from '../utils/envelopeFunding';
 import { formatNaira } from '../utils/formatters';
 
 interface LowBalanceAlertProps {
@@ -9,6 +10,8 @@ interface LowBalanceAlertProps {
   envelopes: Envelope[];
   survivalBufferCash: number;
   unplannedSpendTotal: number;
+  expenses?: ExpenseRecord[];
+  budgetCycleStartDate?: string;
   onOpenQuickSpend?: () => void;
   onNavigateToJobs?: () => void;
 }
@@ -19,24 +22,33 @@ export const LowBalanceAlert: React.FC<LowBalanceAlertProps> = ({
   envelopes,
   survivalBufferCash,
   unplannedSpendTotal,
+  expenses = [],
+  budgetCycleStartDate,
   onOpenQuickSpend,
   onNavigateToJobs,
 }) => {
   const [isDismissed, setIsDismissed] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Identify critical survival envelopes that are empty or underfunded (<25% of target)
-  const criticalEnvelopes = envelopes.filter(
-    (e) => e.isEssentialForSurvival && (e.currentBalance === 0 || e.currentBalance / e.monthlyTarget < 0.25)
-  );
+  // CRITICAL BUSINESS RULE:
+  // Once a target is reached, whether the money has been spent to the least or not,
+  // it should NOT be recommended that the envelope is underfunded.
+  // Only envelopes that have not been funded up to the target or that have not been funded at all
+  // should be recommended for underfunding in the recommendation.
+  const criticalFundingStatuses = envelopes
+    .filter((e) => e.isEssentialForSurvival && e.monthlyTarget > 0)
+    .map((e) => calculateEnvelopeFunding(e, expenses, budgetCycleStartDate))
+    .filter((status) => status.isUnderfunded);
+
+  const criticalEnvelopes = criticalFundingStatuses.map((s) => s.envelope);
 
   // Determine alert level
   const isZeroCash = totalLiquidInHand === 0;
   const isCriticalRunway = runwayDays < 15;
-  const hasEmptyEssentials = criticalEnvelopes.length > 0;
+  const hasEmptyEssentials = criticalFundingStatuses.length > 0;
 
   // If everything is healthy and cash is plenty, show minimal calm reassurance
-  const isHealthy = !isZeroCash && runwayDays >= 45 && criticalEnvelopes.length === 0;
+  const isHealthy = !isZeroCash && runwayDays >= 45 && criticalFundingStatuses.length === 0;
 
   if (isDismissed) return null;
 
@@ -46,7 +58,7 @@ export const LowBalanceAlert: React.FC<LowBalanceAlertProps> = ({
         <div className="flex items-center gap-2.5 text-emerald-900 dark:text-emerald-200">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
           <span>
-            <strong>Resilient Cash Flow:</strong> All essential envelopes are funded above survival thresholds and your runway covers {runwayDays} days.
+            <strong>Resilient Cash Flow:</strong> All essential survival envelopes have reached their monthly targets and your runway covers {runwayDays} days.
           </span>
         </div>
         <button
@@ -110,11 +122,11 @@ export const LowBalanceAlert: React.FC<LowBalanceAlertProps> = ({
               {isZeroCash
                 ? 'No liquid cash recorded yet. Upload your ongoing jobs or log paid milestones to distribute cash to your envelopes and buffer.'
                 : `You currently have ${formatNaira(totalLiquidInHand)} in hand. ${
-                    criticalEnvelopes.length > 0
-                      ? `${criticalEnvelopes.length} essential survival bucket${
-                          criticalEnvelopes.length > 1 ? 's are' : ' is'
-                        } critically low.`
-                      : 'Ensure upcoming milestone invoices are submitted promptly.'
+                    criticalFundingStatuses.length > 0
+                      ? `${criticalFundingStatuses.length} essential survival bucket${
+                          criticalFundingStatuses.length > 1 ? 's have' : ' has'
+                        } not yet reached monthly funding targets.`
+                      : 'All essential envelopes are funded to target for this cycle.'
                   }`}
             </p>
           </div>
@@ -135,7 +147,7 @@ export const LowBalanceAlert: React.FC<LowBalanceAlertProps> = ({
             </button>
           )}
 
-          {criticalEnvelopes.length > 0 && (
+          {criticalFundingStatuses.length > 0 && (
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-black/5 dark:hover:bg-white/5"
@@ -155,12 +167,11 @@ export const LowBalanceAlert: React.FC<LowBalanceAlertProps> = ({
         </div>
       </div>
 
-      {/* Expanded breakdown of low-balance envelopes */}
-      {isExpanded && criticalEnvelopes.length > 0 && (
+      {/* Expanded breakdown of underfunded essential envelopes */}
+      {isExpanded && criticalFundingStatuses.length > 0 && (
         <div className="mt-4 pt-3 border-t border-rose-200/60 dark:border-rose-800/40 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-          {criticalEnvelopes.map((env) => {
-            const fundedPercent = Math.round((env.currentBalance / env.monthlyTarget) * 100);
-            const deficit = env.monthlyTarget - env.currentBalance;
+          {criticalFundingStatuses.map((status) => {
+            const env = status.envelope;
             return (
               <div
                 key={env.id}
@@ -169,12 +180,14 @@ export const LowBalanceAlert: React.FC<LowBalanceAlertProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-900 dark:text-slate-100 truncate">{env.name}</span>
                   <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
-                    {fundedPercent}% funded
+                    {status.fundingPercentage}% funded
                   </span>
                 </div>
                 <div className="mt-1 flex items-baseline justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                  <span>Balance: {formatNaira(env.currentBalance)}</span>
-                  <span className="text-slate-700 dark:text-slate-300 font-medium">Deficit: {formatNaira(deficit)}</span>
+                  <span>Funded: {formatNaira(status.totalFundedThisCycle)}</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-medium">
+                    Deficit: {formatNaira(status.targetRemaining)}
+                  </span>
                 </div>
               </div>
             );

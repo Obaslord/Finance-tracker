@@ -1,4 +1,5 @@
 import { AppState, Envelope, ExpenseRecord, Job, PaymentReceipt } from '../types';
+import { calculateEnvelopeFunding } from './envelopeFunding';
 
 /**
  * Escapes fields for CSV according to RFC 4180 rules.
@@ -71,6 +72,241 @@ export function exportExpensesToCsv(expenses: ExpenseRecord[], envelopes: Envelo
   const csvContent = [headers.join(','), ...rows].join('\r\n');
   const timestamp = new Date().toISOString().split('T')[0];
   downloadFile(csvContent, `obaslord-expenses-${timestamp}.csv`);
+}
+
+/**
+ * Exports spending trends analysis with burn velocity and categorization to CSV.
+ */
+export function exportSpendingTrendsToCsv(
+  expenses: ExpenseRecord[],
+  envelopes: Envelope[],
+  timeRangeLabel = 'All Time'
+) {
+  const envelopeMap = new Map<string, Envelope>();
+  envelopes.forEach((e) => envelopeMap.set(e.id, e));
+
+  const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const unplannedSpent = expenses.filter((e) => e.isUnplanned).reduce((sum, e) => sum + e.amount, 0);
+  const plannedSpent = totalSpent - unplannedSpent;
+  const unplannedRatio = totalSpent > 0 ? Math.round((unplannedSpent / totalSpent) * 100) : 0;
+
+  // Velocity calculation
+  const timestamps = expenses.map((e) => new Date(e.date).getTime());
+  const minTs = timestamps.length > 0 ? Math.min(...timestamps) : Date.now();
+  const maxTs = timestamps.length > 0 ? Math.max(...timestamps) : Date.now();
+  const daysDiff = Math.max(1, Math.ceil((maxTs - minTs) / 86400000));
+  const dailyVelocity = Math.round(totalSpent / daysDiff);
+  const projectedMonthlyBurn = dailyVelocity * 30;
+
+  const lines: string[] = [
+    '=== OBASLORD SPENDING TRENDS & BURN VELOCITY REPORT ===',
+    `Generated On,${escapeCsvField(new Date().toLocaleString('en-GB'))}`,
+    `Filter Window,${escapeCsvField(timeRangeLabel)}`,
+    '',
+    '--- SPENDING VELOCITY & OUTFLOW METRICS ---',
+    `Total Outflows Logged (NGN),${totalSpent}`,
+    `Planned Budget Spends (NGN),${plannedSpent}`,
+    `Unplanned / Emergency Spends (NGN),${unplannedSpent}`,
+    `Unplanned Spending Ratio,${unplannedRatio}%`,
+    `Active Spending Days Analyzed,${daysDiff}`,
+    `Daily Outflow Burn Velocity (NGN/day),${dailyVelocity}`,
+    `Projected 30-Day Monthly Burn (NGN),${projectedMonthlyBurn}`,
+    '',
+    '--- DETAILED OUTFLOW TRANSACTIONS ---',
+    [
+      'Date & Time',
+      'Envelope / Bucket',
+      'Category',
+      'Essential for Survival',
+      'Amount (NGN)',
+      'Spend Type',
+      'Tag',
+      'Description / Note',
+    ].join(','),
+    ...expenses.map((exp) => {
+      const env = envelopeMap.get(exp.envelopeId);
+      const envName = env ? env.name : exp.envelopeId === 'survival_buffer' ? 'Unallocated Survival Buffer' : exp.envelopeId;
+      const category = env ? env.category : 'General';
+      const isEssential = env?.isEssentialForSurvival ? 'Yes' : 'No';
+      const type = exp.isUnplanned ? 'Unplanned / Emergency' : 'Planned Budget';
+
+      return [
+        escapeCsvField(new Date(exp.date).toLocaleString('en-GB')),
+        escapeCsvField(envName),
+        escapeCsvField(category),
+        escapeCsvField(isEssential),
+        escapeCsvField(exp.amount),
+        escapeCsvField(type),
+        escapeCsvField(exp.categoryTag || 'General'),
+        escapeCsvField(exp.note || ''),
+      ].join(',');
+    }),
+  ];
+
+  const csvContent = lines.join('\r\n');
+  const timestamp = new Date().toISOString().split('T')[0];
+  downloadFile(csvContent, `obaslord-spending-trends-${timestamp}.csv`);
+}
+
+/**
+ * Exports complete Cash Flow and Capital Velocity analysis to CSV.
+ */
+export function exportCashFlowAndCapitalVelocityToCsv(
+  state: {
+    receipts: PaymentReceipt[];
+    expenses: ExpenseRecord[];
+    envelopes: Envelope[];
+    survivalBufferCash: number;
+    taxReserve: number;
+    pendingPipelineAmount?: number;
+    jobs?: Job[];
+    budgetCycleStartDate?: string;
+  }
+) {
+  const receipts = state.receipts || [];
+  const expenses = state.expenses || [];
+  const envelopes = state.envelopes || [];
+  const survivalBufferCash = state.survivalBufferCash || 0;
+  const taxReserve = state.taxReserve || 0;
+
+  const totalGrossInflow = receipts.reduce((sum, r) => sum + r.grossAmount, 0);
+  const totalTaxWithheld = receipts.reduce((sum, r) => sum + r.taxAmount, 0);
+  const totalNetInflow = receipts.reduce((sum, r) => sum + r.netAmount, 0);
+
+  const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const unplannedSpent = expenses.filter((e) => e.isUnplanned).reduce((sum, e) => sum + e.amount, 0);
+  const plannedSpent = totalSpent - unplannedSpent;
+
+  const totalEnvelopeCash = envelopes.reduce((sum, e) => sum + e.currentBalance, 0);
+  const totalLiquidInHand = totalEnvelopeCash + survivalBufferCash;
+
+  // Survival burn calculation
+  const monthlySurvivalBurn = envelopes
+    .filter((e) => e.isEssentialForSurvival)
+    .reduce((sum, e) => sum + e.monthlyTarget, 0);
+  const dailySurvivalBurn = monthlySurvivalBurn > 0 ? Math.round(monthlySurvivalBurn / 30) : 1;
+  const survivalRunwayDays = Math.floor(totalLiquidInHand / dailySurvivalBurn);
+
+  const pendingPipeline =
+    state.pendingPipelineAmount !== undefined
+      ? state.pendingPipelineAmount
+      : (state.jobs || [])
+          .filter((j) => j.status !== 'cancelled')
+          .flatMap((j) => j.milestones)
+          .filter((m) => !m.isPaid)
+          .reduce((sum, m) => sum + m.amount, 0);
+
+  const netCashFlow = totalNetInflow - totalSpent;
+  const velocityRatio = totalSpent > 0 ? (totalNetInflow / totalSpent).toFixed(2) : 'N/A';
+
+  const lines: string[] = [
+    '=== OBASLORD CASH FLOW & CAPITAL VELOCITY REPORT ===',
+    `Generated On,${escapeCsvField(new Date().toLocaleString('en-GB'))}`,
+    '',
+    '--- 1. CAPITAL LIQUIDITY & RUNWAY METRICS ---',
+    `Total Liquid Cash In Hand (NGN),${totalLiquidInHand}`,
+    `Envelopes Liquid Balances (NGN),${totalEnvelopeCash}`,
+    `Unallocated Survival Buffer (NGN),${survivalBufferCash}`,
+    `10% Tax Reserve Vault Locked (NGN),${taxReserve}`,
+    `Monthly Survival Baseline Burn (NGN),${monthlySurvivalBurn}`,
+    `Daily Survival Burn Rate (NGN/day),${dailySurvivalBurn}`,
+    `Survival Runway (Days),${survivalRunwayDays}`,
+    `Pending Job Pipeline (NGN),${pendingPipeline}`,
+    '',
+    '--- 2. CASH FLOW VELOCITY SUMMARY ---',
+    `Gross Client Inflows (NGN),${totalGrossInflow}`,
+    `10% Tax Withheld at Payout (NGN),${totalTaxWithheld}`,
+    `Net Inflows Distributed to Envelopes (NGN),${totalNetInflow}`,
+    `Total Outflows / Expenses (NGN),${totalSpent}`,
+    `Planned Budget Outflows (NGN),${plannedSpent}`,
+    `Unplanned Emergency Outflows (NGN),${unplannedSpent}`,
+    `Net Cash Realized (Net Inflows minus Outflows) (NGN),${netCashFlow}`,
+    `Capital Velocity Ratio (Net Inflow / Outflow),${velocityRatio}`,
+    '',
+    '--- 3. ENVELOPE TARGET FUNDING & VELOCITY STATUS ---',
+    [
+      'Envelope Name',
+      'Category',
+      'Survival Essential',
+      'Monthly Target (NGN)',
+      'Total Funded This Cycle (NGN)',
+      'Target Reached',
+      'Funding Status',
+      'Current Liquid Balance (NGN)',
+      'Spent This Cycle (NGN)',
+      'Remaining Target Deficit (NGN)',
+      'Savings Goal Title',
+      'Savings Goal Target (NGN)',
+    ].join(','),
+    ...envelopes.map((env) => {
+      const funding = calculateEnvelopeFunding(env, expenses, state.budgetCycleStartDate);
+      const isReached = funding.isTargetReached ? 'Yes (Target Met)' : 'No';
+      const status = funding.isTargetReached ? 'Target Reached' : funding.hasNoFunding ? 'Unfunded' : 'Underfunded';
+
+      return [
+        escapeCsvField(env.name),
+        escapeCsvField(env.category),
+        escapeCsvField(env.isEssentialForSurvival ? 'Yes' : 'No'),
+        escapeCsvField(env.monthlyTarget),
+        escapeCsvField(funding.totalFundedThisCycle),
+        escapeCsvField(isReached),
+        escapeCsvField(status),
+        escapeCsvField(env.currentBalance),
+        escapeCsvField(funding.amountSpentThisCycle),
+        escapeCsvField(funding.targetRemaining),
+        escapeCsvField(env.savingsGoal?.title || 'None'),
+        escapeCsvField(env.savingsGoal?.targetAmount || 0),
+      ].join(',');
+    }),
+    '',
+    '--- 4. CASH INFLOW RECEIPTS AUDIT TRAIL ---',
+    [
+      'Receipt ID',
+      'Date Received',
+      'Job Title',
+      'Milestone / Contract Phase',
+      'Gross Amount (NGN)',
+      '10% Tax Withheld (NGN)',
+      'Net Inflow to Envelopes (NGN)',
+      'Unallocated Buffer Added (NGN)',
+    ].join(','),
+    ...receipts.map((r) => [
+      escapeCsvField(r.id),
+      escapeCsvField(new Date(r.receivedAt).toLocaleString('en-GB')),
+      escapeCsvField(r.jobTitle),
+      escapeCsvField(r.milestoneTitle || 'Full Job'),
+      escapeCsvField(r.grossAmount),
+      escapeCsvField(r.taxAmount),
+      escapeCsvField(r.netAmount),
+      escapeCsvField(r.unallocatedBuffer || 0),
+    ].join(',')),
+    '',
+    '--- 5. CASH OUTFLOW TRANSACTIONS AUDIT TRAIL ---',
+    [
+      'Date & Time',
+      'Envelope / Bucket',
+      'Amount (NGN)',
+      'Type',
+      'Category Tag',
+      'Description / Note',
+    ].join(','),
+    ...expenses.map((exp) => {
+      const env = envelopes.find((e) => e.id === exp.envelopeId);
+      const envName = env ? env.name : exp.envelopeId === 'survival_buffer' ? 'Unallocated Survival Buffer' : exp.envelopeId;
+      return [
+        escapeCsvField(new Date(exp.date).toLocaleString('en-GB')),
+        escapeCsvField(envName),
+        escapeCsvField(exp.amount),
+        escapeCsvField(exp.isUnplanned ? 'Unplanned' : 'Planned'),
+        escapeCsvField(exp.categoryTag || 'General'),
+        escapeCsvField(exp.note || ''),
+      ].join(',');
+    }),
+  ];
+
+  const csvContent = lines.join('\r\n');
+  const timestamp = new Date().toISOString().split('T')[0];
+  downloadFile(csvContent, `obaslord-cashflow-and-capital-velocity-${timestamp}.csv`);
 }
 
 /**

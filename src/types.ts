@@ -43,6 +43,7 @@ export interface Envelope {
   savingsGoal?: SavingsGoal;
   cumulativeAllocated?: number; // Total funds allocated/saved to this envelope (preserved across spending)
   monthlyAllocated?: number; // Total allocated in current 30-day month cycle
+  targetReached?: boolean; // Set to true once the monthly target is met in the cycle, preserved across spends
 }
 
 export interface ExpenseRecord {

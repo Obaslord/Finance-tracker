@@ -700,7 +700,9 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               envelope.currentBalance + amountSpent
             );
 
-            const isTargetReached = envelope.monthlyTarget > 0 && totalAllocatedThisMonth >= envelope.monthlyTarget;
+            const isTargetReached =
+              envelope.monthlyTarget > 0 &&
+              (Boolean(envelope.targetReached) || totalAllocatedThisMonth >= envelope.monthlyTarget);
             const isOverAllocated = envelope.monthlyTarget > 0 && totalAllocatedThisMonth > envelope.monthlyTarget;
             const overAllocatedAmount = Math.max(0, totalAllocatedThisMonth - envelope.monthlyTarget);
             const remainingTargetToAllocate = Math.max(0, envelope.monthlyTarget - totalAllocatedThisMonth);

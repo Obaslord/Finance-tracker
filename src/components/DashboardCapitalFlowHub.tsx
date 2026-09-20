@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Coins,
   DollarSign,
+  Download,
   Filter,
   History,
   Landmark,
@@ -25,6 +26,8 @@ import {
 } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { Envelope, ExpenseRecord, PaymentReceipt } from '../types';
+import { calculateEnvelopeFunding } from '../utils/envelopeFunding';
+import { exportCashFlowAndCapitalVelocityToCsv } from '../utils/exportData';
 import { formatDate, formatNaira, formatPercent, formatTimeAgo } from '../utils/formatters';
 import { CashFlowVisualizer } from './CashFlowVisualizer';
 
@@ -500,22 +503,42 @@ export const DashboardCapitalFlowHub: React.FC<DashboardCapitalFlowHubProps> = (
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Target Funding Allocation Breakdown
                 </h4>
-                {onOpenBufferReallocate && (
+                <div className="flex items-center gap-3">
                   <button
-                    onClick={onOpenBufferReallocate}
-                    className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                    onClick={() =>
+                      exportCashFlowAndCapitalVelocityToCsv({
+                        receipts,
+                        expenses,
+                        envelopes,
+                        survivalBufferCash,
+                        taxReserve,
+                        pendingPipelineAmount,
+                        budgetCycleStartDate,
+                      })
+                    }
+                    className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                    title="Export Cash Flow & Capital Velocity CSV"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Reallocate Cash in Hand</span>
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download CSV</span>
                   </button>
-                )}
+                  {onOpenBufferReallocate && (
+                    <button
+                      onClick={onOpenBufferReallocate}
+                      className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reallocate Cash in Hand</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden">
                 {envelopes.map((env) => {
-                  const allocated = env.monthlyAllocated !== undefined ? env.monthlyAllocated : env.currentBalance;
-                  const isFunded = env.monthlyTarget > 0 && allocated >= env.monthlyTarget;
-                  const pct = env.monthlyTarget > 0 ? Math.round((allocated / env.monthlyTarget) * 100) : 100;
+                  const funding = calculateEnvelopeFunding(env, expenses, budgetCycleStartDate);
+                  const isFunded = funding.isTargetReached;
+                  const pct = funding.fundingPercentage;
 
                   return (
                     <div
@@ -535,7 +558,10 @@ export const DashboardCapitalFlowHub: React.FC<DashboardCapitalFlowHubProps> = (
                           </div>
                           <span className="text-[10px] text-slate-500 dark:text-slate-400">
                             Current balance: {formatNaira(env.currentBalance)}
-                            {env.cumulativeAllocated !== undefined && env.cumulativeAllocated > allocated && (
+                            {funding.amountSpentThisCycle > 0 && (
+                              <span> • Spent this cycle: {formatNaira(funding.amountSpentThisCycle)}</span>
+                            )}
+                            {env.cumulativeAllocated !== undefined && env.cumulativeAllocated > funding.totalFundedThisCycle && (
                               <span> • {formatNaira(env.cumulativeAllocated)} total cumulative</span>
                             )}
                           </span>
@@ -546,12 +572,12 @@ export const DashboardCapitalFlowHub: React.FC<DashboardCapitalFlowHubProps> = (
                         <div className="text-right">
                           <div className="flex items-center gap-1 text-xs">
                             <span className="font-bold text-slate-900 dark:text-slate-100">
-                              {formatNaira(allocated)}
+                              {formatNaira(funding.totalFundedThisCycle)}
                             </span>
                             <span className="text-slate-400">/ {formatNaira(env.monthlyTarget)}</span>
                           </div>
                           <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                            {pct}% of monthly need
+                            {isFunded ? 'Target reached' : `${pct}% of monthly need`}
                           </span>
                         </div>
 
@@ -562,7 +588,7 @@ export const DashboardCapitalFlowHub: React.FC<DashboardCapitalFlowHubProps> = (
                               : 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
                           }`}
                         >
-                          {isFunded ? 'Funded ✓' : 'Underfunded'}
+                          {isFunded ? 'Target Reached ✓' : `Underfunded`}
                         </span>
                       </div>
                     </div>

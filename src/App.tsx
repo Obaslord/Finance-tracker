@@ -242,10 +242,14 @@ export default function App() {
       // 3. Fund each envelope
       const updatedEnvelopes = prev.envelopes.map((env) => {
         const allocated = allocations[env.id] || 0;
+        const newMonthly = (env.monthlyAllocated !== undefined ? env.monthlyAllocated : env.currentBalance) + allocated;
+        const reached = Boolean(env.targetReached) || (env.monthlyTarget > 0 && newMonthly >= env.monthlyTarget);
         return {
           ...env,
           currentBalance: env.currentBalance + allocated,
+          monthlyAllocated: newMonthly,
           cumulativeAllocated: (env.cumulativeAllocated || env.currentBalance || 0) + allocated,
+          targetReached: reached,
         };
       });
 
@@ -368,15 +372,19 @@ export default function App() {
       if (targetId === 'survival_buffer') {
         buffer += amount;
       } else {
-        envelopes = envelopes.map((env) =>
-          env.id === targetId
-            ? {
-                ...env,
-                currentBalance: env.currentBalance + amount,
-                cumulativeAllocated: (env.cumulativeAllocated || env.currentBalance || 0) + amount,
-              }
-            : env
-        );
+        envelopes = envelopes.map((env) => {
+          if (env.id !== targetId) return env;
+          const newBal = env.currentBalance + amount;
+          const newMonthly = (env.monthlyAllocated !== undefined ? env.monthlyAllocated : env.currentBalance) + amount;
+          const reached = Boolean(env.targetReached) || (env.monthlyTarget > 0 && newMonthly >= env.monthlyTarget);
+          return {
+            ...env,
+            currentBalance: newBal,
+            monthlyAllocated: newMonthly,
+            cumulativeAllocated: (env.cumulativeAllocated || env.currentBalance || 0) + amount,
+            targetReached: reached,
+          };
+        });
       }
 
       return {
@@ -456,7 +464,20 @@ export default function App() {
           mode === 'add'
             ? (e.cumulativeAllocated || e.currentBalance || 0) + amount
             : (e.cumulativeAllocated || e.currentBalance || 0);
-        return { ...e, currentBalance: newBal, cumulativeAllocated: newCumulative };
+        const newMonthly =
+          mode === 'add'
+            ? (e.monthlyAllocated !== undefined ? e.monthlyAllocated : e.currentBalance) + amount
+            : e.monthlyAllocated;
+        const reached =
+          Boolean(e.targetReached) ||
+          (e.monthlyTarget > 0 && (newMonthly !== undefined ? newMonthly : newBal) >= e.monthlyTarget);
+        return {
+          ...e,
+          currentBalance: newBal,
+          cumulativeAllocated: newCumulative,
+          monthlyAllocated: newMonthly,
+          targetReached: reached,
+        };
       }),
     }));
   };
@@ -608,6 +629,7 @@ export default function App() {
         ...e,
         currentBalance: 0,
         monthlyAllocated: 0,
+        targetReached: false,
       }));
 
       return {
@@ -631,11 +653,14 @@ export default function App() {
       const updatedEnvelopes = prev.envelopes.map((env) => {
         const added = allocations[env.id] || 0;
         if (added <= 0) return env;
+        const newMonthly = (env.monthlyAllocated || 0) + added;
+        const reached = Boolean(env.targetReached) || (env.monthlyTarget > 0 && newMonthly >= env.monthlyTarget);
         return {
           ...env,
           currentBalance: env.currentBalance + added,
-          monthlyAllocated: (env.monthlyAllocated || 0) + added,
+          monthlyAllocated: newMonthly,
           cumulativeAllocated: (env.cumulativeAllocated || 0) + added,
+          targetReached: reached,
         };
       });
 
@@ -1128,75 +1153,87 @@ export default function App() {
       )}
 
       {/* Quick Unplanned Spend Modal */}
-      <QuickSpendModal
-        isOpen={isQuickSpendOpen}
-        onClose={() => setIsQuickSpendOpen(false)}
-        envelopes={state.envelopes}
-        survivalBufferCash={state.survivalBufferCash}
-        onLogQuickSpend={handleLogQuickSpend}
-      />
+      {isQuickSpendOpen && (
+        <QuickSpendModal
+          isOpen={isQuickSpendOpen}
+          onClose={() => setIsQuickSpendOpen(false)}
+          envelopes={state.envelopes}
+          survivalBufferCash={state.survivalBufferCash}
+          onLogQuickSpend={handleLogQuickSpend}
+        />
+      )}
 
       {/* Expense Spending History Modal */}
-      <ExpenseHistoryModal
-        isOpen={isExpenseHistoryOpen}
-        onClose={() => setIsExpenseHistoryOpen(false)}
-        expenses={state.expenseHistory}
-        envelopes={state.envelopes}
-        onDeleteExpense={handleDeleteExpense}
-        onOpenTrends={() => {
-          setIsExpenseHistoryOpen(false);
-          setActiveTab('trends');
-        }}
-      />
+      {isExpenseHistoryOpen && (
+        <ExpenseHistoryModal
+          isOpen={isExpenseHistoryOpen}
+          onClose={() => setIsExpenseHistoryOpen(false)}
+          expenses={state.expenseHistory}
+          envelopes={state.envelopes}
+          onDeleteExpense={handleDeleteExpense}
+          onOpenTrends={() => {
+            setIsExpenseHistoryOpen(false);
+            setActiveTab('trends');
+          }}
+        />
+      )}
 
       {/* Settings Modal (Theme, Reset, Demo Data, Target adjustments, Export) */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        theme={state.theme || 'light'}
-        onToggleTheme={handleToggleTheme}
-        envelopes={state.envelopes}
-        onUpdateTarget={handleAdjustTarget}
-        onResetToZeroBaseline={handleResetToZeroBaseline}
-        onLoadDemoState={handleLoadDemoState}
-        onOpenSurvivalConfig={() => {
-          setIsSettingsOpen(false);
-          setIsSurvivalConfigOpen(true);
-        }}
-        onOpenExportModal={(tab) => {
-          setIsSettingsOpen(false);
-          setExportModalInitialTab(tab || 'autobackup');
-          setIsExportModalOpen(true);
-        }}
-      />
+      {isSettingsOpen && (
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          theme={state.theme || 'light'}
+          onToggleTheme={handleToggleTheme}
+          envelopes={state.envelopes}
+          onUpdateTarget={handleAdjustTarget}
+          onResetToZeroBaseline={handleResetToZeroBaseline}
+          onLoadDemoState={handleLoadDemoState}
+          onOpenSurvivalConfig={() => {
+            setIsSettingsOpen(false);
+            setIsSurvivalConfigOpen(true);
+          }}
+          onOpenExportModal={(tab) => {
+            setIsSettingsOpen(false);
+            setExportModalInitialTab(tab || 'autobackup');
+            setIsExportModalOpen(true);
+          }}
+        />
+      )}
 
       {/* Survival Threshold Configuration Modal */}
-      <SurvivalConfigModal
-        isOpen={isSurvivalConfigOpen}
-        onClose={() => setIsSurvivalConfigOpen(false)}
-        envelopes={state.envelopes}
-        onToggleEssential={handleToggleEssential}
-        onResetToDefault={handleResetToZeroBaseline}
-      />
+      {isSurvivalConfigOpen && (
+        <SurvivalConfigModal
+          isOpen={isSurvivalConfigOpen}
+          onClose={() => setIsSurvivalConfigOpen(false)}
+          envelopes={state.envelopes}
+          onToggleEssential={handleToggleEssential}
+          onResetToDefault={handleResetToZeroBaseline}
+        />
+      )}
 
       {/* Export & Data Backup Modal */}
-      <ExportDataModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        appState={state}
-        onRestoreState={handleRestoreState}
-        initialTab={exportModalInitialTab}
-      />
+      {isExportModalOpen && (
+        <ExportDataModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          appState={state}
+          onRestoreState={handleRestoreState}
+          initialTab={exportModalInitialTab}
+        />
+      )}
 
       {/* Buffer / Cash in Hand 30-Day Cycle Reallocation Modal */}
-      <BufferReallocationModal
-        isOpen={isBufferReallocateOpen}
-        onClose={() => setIsBufferReallocateOpen(false)}
-        envelopes={state.envelopes}
-        survivalBufferCash={state.survivalBufferCash}
-        cycleNumber={state.budgetCycleNumber || 1}
-        onConfirmReallocation={handleCommitBufferReallocation}
-      />
+      {isBufferReallocateOpen && (
+        <BufferReallocationModal
+          isOpen={isBufferReallocateOpen}
+          onClose={() => setIsBufferReallocateOpen(false)}
+          envelopes={state.envelopes}
+          survivalBufferCash={state.survivalBufferCash}
+          cycleNumber={state.budgetCycleNumber || 1}
+          onConfirmReallocation={handleCommitBufferReallocation}
+        />
+      )}
 
       {/* Network Connectivity / Offline Indicator */}
       <OfflineIndicator />
