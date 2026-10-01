@@ -136,12 +136,14 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   const totalMonthlyTarget = envelopes.reduce((sum, e) => sum + e.monthlyTarget, 0);
 
   // 30-Day Budget Cycle calculations (Requirement: 30-day month cycle)
-  const cycleStartMs = budgetCycleStartDate ? new Date(budgetCycleStartDate).getTime() : Date.now();
+  const cycleStartMs = budgetCycleStartDate
+    ? new Date(budgetCycleStartDate).getTime()
+    : new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
   const daysElapsed = Math.max(0, Math.floor((Date.now() - cycleStartMs) / (24 * 60 * 60 * 1000)));
   const daysRemaining = Math.max(0, 30 - daysElapsed);
   const cycleProgressPct = Math.min(100, Math.round((daysElapsed / 30) * 100));
 
-  // Current cycle expense calculations per envelope
+  // Current cycle expense calculations per envelope (this month's expenses only)
   const cycleExpensesMap = useMemo(() => {
     const map = new Map<string, number>();
     if (!expenseHistory) return map;
@@ -154,7 +156,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
     return map;
   }, [expenseHistory, cycleStartMs]);
 
-  // Aggregated expense calculations per envelope
+  // Aggregated expense calculations per envelope (all-time historical, for export/audits)
   const spentByEnvelopeMap = useMemo(() => {
     const map = new Map<string, number>();
     if (!expenseHistory) return map;
@@ -167,13 +169,13 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   // Envelopes approaching or at target limits in this cycle
   const envelopesWithSpendingWarnings = useMemo(() => {
     return envelopes.filter((e) => {
-      const spent = cycleExpensesMap.get(e.id) ?? (spentByEnvelopeMap.get(e.id) || 0);
+      const spent = cycleExpensesMap.get(e.id) || 0;
       const bench = e.monthlyTarget > 0 ? e.monthlyTarget : (e.monthlyAllocated || e.currentBalance + spent);
       if (bench <= 0 || spent <= 0) return false;
       const remPct = ((bench - spent) / bench) * 100;
       return remPct <= 10 || spent >= bench;
     });
-  }, [envelopes, cycleExpensesMap, spentByEnvelopeMap]);
+  }, [envelopes, cycleExpensesMap]);
 
   // Aggregated receipt allocations per envelope
   const receiptAllocationsMap = useMemo(() => {
@@ -190,21 +192,25 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   }, [paymentReceipts]);
 
   // Helper function to calculate total funds allocated/saved to an envelope.
-  // Persists across spending so envelopes with savings targets continue to read based on what has already been allocated.
+  // Rule: Only savings targets that are over a month or long term should show progress of what has been put in over time (1 year max).
+  // Regular envelopes go back to zero after a new month and the cycle continues.
   const getEnvelopeSavedSoFar = (env: Envelope) => {
-    const spent = spentByEnvelopeMap.get(env.id) || 0;
-    const receiptAlloc = receiptAllocationsMap.get(env.id) || 0;
-    const directTotal = env.currentBalance + spent;
-    return Math.max(env.cumulativeAllocated || 0, directTotal, receiptAlloc);
+    const isLongTermSavings = Boolean(env.savingsGoal) || env.category === 'savings';
+    if (!isLongTermSavings) {
+      return env.currentBalance;
+    }
+    const goalTarget = env.savingsGoal?.targetAmount || 0;
+    const accumulated = Math.max(env.currentBalance, env.cumulativeAllocated || 0);
+    return goalTarget > 0 ? Math.min(goalTarget, accumulated) : accumulated;
   };
 
   const totalSpentAcrossEnvelopes = useMemo(() => {
     let sum = 0;
     for (const env of envelopes) {
-      sum += spentByEnvelopeMap.get(env.id) || 0;
+      sum += cycleExpensesMap.get(env.id) || 0;
     }
     return sum;
-  }, [envelopes, spentByEnvelopeMap]);
+  }, [envelopes, cycleExpensesMap]);
 
   const totalRemainingTargetAcrossEnvelopes = Math.max(0, totalMonthlyTarget - totalFunded);
 
@@ -691,7 +697,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
           {envelopes.map((envelope) => {
             const Icon = ICON_MAP[envelope.iconName] || Wallet;
-            const amountSpent = cycleExpensesMap.get(envelope.id) ?? (spentByEnvelopeMap.get(envelope.id) || 0);
+            const amountSpent = cycleExpensesMap.get(envelope.id) || 0;
 
             // Total allocated to this envelope in the current month:
             // User rule: Once a target is reached for the month, the bar should automatically continually show target reached for that month, irrespective of whether the money has been spent or not.
@@ -871,6 +877,8 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                         <span className="text-xs text-slate-400 font-semibold">₦</span>
                         <input
                           type="number"
+                          step="any"
+                          min="0"
                           className="w-24 text-xs font-bold px-1.5 py-0.5 border border-blue-400 rounded focus:outline-none bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                           value={tempTarget}
                           onChange={(e) => setTempTarget(e.target.value)}
@@ -1209,7 +1217,8 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0.01"
+                    step="any"
                     max={activeSpendEnvelope.currentBalance}
                     placeholder="e.g. 5000"
                     value={spendAmount}
@@ -1235,9 +1244,9 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
               {/* Envelope context stats */}
               <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 text-xs space-y-1">
                 <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
-                  <span>Previously Spent:</span>
+                  <span>Spent This Month:</span>
                   <span className="font-semibold text-slate-900 dark:text-slate-200">
-                    {formatNaira(spentByEnvelopeMap.get(activeSpendEnvelope.id) || 0)}
+                    {formatNaira(cycleExpensesMap.get(activeSpendEnvelope.id) || 0)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
@@ -1326,7 +1335,8 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0.01"
+                    step="any"
                     placeholder="e.g. 5000"
                     value={adjustBalanceAmount}
                     onChange={(e) => setAdjustBalanceAmount(e.target.value)}
@@ -1423,7 +1433,8 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0.01"
+                    step="any"
                     placeholder="e.g. 5000"
                     value={transferAmount}
                     onChange={(e) => setTransferAmount(e.target.value)}
@@ -1513,17 +1524,17 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
 
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
               <p>
-                <strong>What happens when you rollover:</strong>
+                <strong>What happens when you rollover to a new month:</strong>
               </p>
-              <ul className="list-disc pl-4 space-y-1 text-slate-500 dark:text-slate-400">
+              <ul className="list-disc pl-4 space-y-1.5 text-slate-500 dark:text-slate-400">
                 <li>
-                  All remaining envelope balances (totaling <strong>{formatNaira(totalFunded)}</strong>) will automatically return to your <strong>Survival Buffer / Cash in Hand</strong>.
+                  Leftover cash from regular envelopes (totaling <strong>{formatNaira(envelopes.filter((e) => !e.savingsGoal && e.category !== 'savings').reduce((sum, e) => sum + e.currentBalance, 0))}</strong>) will automatically return to your <strong>Cash at Hand / Survival Buffer</strong>.
                 </li>
                 <li>
-                  Envelope balances reset so you can reallocate fresh for the new 30-day month based on cash on hand or new job income.
+                  Regular consumable envelopes reset back to zero for the new month, ready for fresh allocation.
                 </li>
                 <li>
-                  Long-term savings goals will continue to remember all historical allocations and won't lose their accumulated progress!
+                  <strong>Sinking funds &amp; long-term savings goals</strong> keep their accumulated balances in place and continue tracking overtime progress towards their target (1 year max)!
                 </li>
               </ul>
             </div>

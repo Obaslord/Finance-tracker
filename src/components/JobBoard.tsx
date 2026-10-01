@@ -414,7 +414,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({
                     <input
                       type="number"
                       required
-                      min="1"
+                      min="0.01"
+                      step="any"
                       placeholder="e.g. 100000"
                       value={lumpSumAmount}
                       onChange={(e) => setLumpSumAmount(e.target.value)}
@@ -453,7 +454,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({
                           <input
                             type="number"
                             required
-                            min="1"
+                            min="0.01"
+                            step="any"
                             placeholder="Amount"
                             value={row.amount}
                             onChange={(e) => updateMilestoneRow(idx, 'amount', e.target.value)}

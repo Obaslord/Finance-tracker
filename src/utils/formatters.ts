@@ -6,6 +6,20 @@ export function formatNaira(amount: number): string {
   return `₦${rounded.toLocaleString('en-NG')}`;
 }
 
+/**
+ * Formats a number into Nigerian Naira (₦) currency format with precision feedback.
+ */
+export function formatCurrencyPreview(amount: number): string {
+  if (isNaN(amount) || amount <= 0) return '₦0';
+  const hasDecimals = amount % 1 !== 0;
+  return `₦${amount.toLocaleString('en-NG', {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+export const QUICK_AMOUNT_PRESETS = [500, 1000, 2000, 3500, 5000, 10000];
+
 export function formatPercent(value: number): string {
   return `${Math.round(value || 0)}%`;
 }

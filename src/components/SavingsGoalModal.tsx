@@ -255,8 +255,8 @@ export const SavingsGoalModal: React.FC<SavingsGoalModalProps> = ({
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-sm">₦</span>
               <input
                 type="number"
-                min="1000"
-                step="1000"
+                min="1"
+                step="any"
                 placeholder="e.g. 500000"
                 value={targetAmountStr}
                 onChange={(e) => setTargetAmountStr(e.target.value)}

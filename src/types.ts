@@ -1,129 +1,138 @@
-export type PaymentType = 'lump_sum' | 'milestone';
+export type AcademicLevel = 'undergraduate' | 'masters' | 'phd' | 'professional';
 
-export type JobStatus = 'in_progress' | 'pending_payment' | 'completed' | 'cancelled';
+export type UrgencyOption = '14_days' | '7_days' | '5_days' | '3_days' | '48_hours' | '24_hours' | '12_hours';
 
-export interface Milestone {
-  id: string;
-  title: string;
-  amount: number;
-  isPaid: boolean;
-  paidAt?: string;
+export type CurrencyCode = 'USD' | 'GBP' | 'EUR' | 'NGN' | 'CAD';
+
+export type CitationStyle = 'APA 7th' | 'MLA 9th' | 'Chicago / Turabian' | 'Harvard' | 'IEEE' | 'Vancouver' | 'Other / Custom';
+
+export type OrderStatus =
+  | 'brief_review'
+  | 'research_drafting'
+  | 'data_analysis'
+  | 'quality_plagiarism_audit'
+  | 'ready_for_review'
+  | 'revision_requested'
+  | 'completed';
+
+export interface CurrencyConfig {
+  code: CurrencyCode;
+  symbol: string;
+  rateToUSD: number;
+  label: string;
 }
 
-export interface Job {
+export interface ServiceItem {
   id: string;
+  slug: string;
   title: string;
-  clientNote?: string;
-  paymentType: PaymentType;
-  totalAmount: number;
-  status: JobStatus;
-  milestones: Milestone[];
-  createdAt: string;
+  shortDescription: string;
+  longDescription: string;
+  baseRatePerPageUSD: number; // 275 words standard
+  category: 'writing' | 'research_analysis' | 'admissions' | 'editing';
+  turnaroundDefaultDays: number;
+  features: string[];
+  toolsUsed?: string[];
+  targetDisciplines?: string[];
+  faq: { question: string; answer: string }[];
+  deliverables: string[];
+  icon: string;
+  sampleExcerpt?: {
+    title: string;
+    level: string;
+    previewText: string;
+    citationCount?: number;
+    similarityScore: number;
+  };
+}
+
+export interface OrderAttachment {
+  id: string;
+  name: string;
+  sizeMb: number;
+  uploadedAt: string;
+  isEncrypted: boolean;
+}
+
+export interface OrderMilestone {
+  step: number;
+  title: string;
+  description: string;
+  completed: boolean;
+  active: boolean;
   completedAt?: string;
 }
 
-export type EnvelopeCategory = 'survival' | 'debt' | 'utility' | 'family' | 'lifestyle' | 'savings';
-
-export interface SavingsGoal {
-  targetAmount: number;
-  title?: string;
-  targetDate?: string;
-  note?: string;
+export interface OrderMessage {
+  id: string;
+  sender: 'client' | 'consultant' | 'system';
+  senderName: string;
+  senderRole?: string;
+  message: string;
+  timestamp: string;
+  attachments?: string[];
 }
 
-export interface Envelope {
+export interface RevisionRequest {
+  id: string;
+  requestedAt: string;
+  instructions: string;
+  focusSections: string[];
+  status: 'pending' | 'in_progress' | 'resolved';
+}
+
+export interface AcademicOrder {
+  id: string;
+  orderNumber: string;
+  serviceId: string;
+  serviceTitle: string;
+  paperTitle: string;
+  discipline: string;
+  academicLevel: AcademicLevel;
+  citationStyle: CitationStyle;
+  wordCount: number;
+  pageCount: number;
+  urgency: UrgencyOption;
+  deadlineDate: string;
+  totalCost: number;
+  currency: CurrencyCode;
+  status: OrderStatus;
+  createdAt: string;
+  consultantId?: string;
+  consultantName?: string;
+  consultantDegree?: string;
+  attachments: OrderAttachment[];
+  milestones: OrderMilestone[];
+  messages: OrderMessage[];
+  similarityReport?: {
+    scorePercentage: number;
+    checkedWith: string;
+    verifiedOriginal: boolean;
+    auditDate: string;
+    reportRef: string;
+  };
+  revisions: RevisionRequest[];
+  draftAvailable?: boolean;
+  finalDeliverableAvailable?: boolean;
+}
+
+export interface ConsultantProfile {
   id: string;
   name: string;
-  monthlyTarget: number;
-  currentBalance: number;
-  category: EnvelopeCategory;
-  isEssentialForSurvival: boolean;
-  iconName: string;
-  color: string;
-  savingsGoal?: SavingsGoal;
-  cumulativeAllocated?: number; // Total funds allocated/saved to this envelope (preserved across spending)
-  monthlyAllocated?: number; // Total allocated in current 30-day month cycle
-  targetReached?: boolean; // Set to true once the monthly target is met in the cycle, preserved across spends
+  degree: string;
+  institution: string;
+  disciplines: string[];
+  completedProjects: number;
+  rating: number;
+  status: 'available' | 'working' | 'offline';
+  bio: string;
 }
 
-export interface ExpenseRecord {
+export interface NotificationAlert {
   id: string;
-  envelopeId: string; // envelope ID or 'survival_buffer'
-  amount: number;
-  note: string;
-  date: string;
-  isUnplanned?: boolean;
-  categoryTag?: string;
-}
-
-export type AppTheme = 'light' | 'dark';
-
-export interface PaymentReceipt {
-  id: string;
-  jobId: string;
-  jobTitle: string;
-  milestoneId?: string;
-  milestoneTitle?: string;
-  grossAmount: number;
-  taxAmount: number; // 10% tax reserved
-  netAmount: number; // 90% available for envelopes
-  allocatedAmounts: Record<string, number>; // envelopeId -> amount
-  unallocatedBuffer: number;
-  receivedAt: string;
-}
-
-export interface GiftLog {
-  id: string;
-  sender: string;
-  amount: number;
-  date: string;
-  occasion?: string;
-  note?: string;
-  createdAt: string;
-}
-
-export interface AutoBackupSettings {
-  enabled: boolean;
-  frequencyDays: number; // Default 7 (weekly)
-  lastBackupDate?: string;
-  autoSaveToDownloads: boolean;
-}
-
-export interface BackupSnapshot {
-  id: string;
-  date: string;
-  timestamp: number;
-  description: string;
-  state: AppState;
-}
-
-export interface CycleRolloverRecord {
-  id: string;
-  cycleNumber: number;
-  startDate: string;
-  endDate: string;
-  totalSweptToBuffer: number;
-  envelopesSwept: {
-    envelopeId: string;
-    envelopeName: string;
-    sweptAmount: number;
-  }[];
-  date: string;
-}
-
-export interface AppState {
-  jobs: Job[];
-  envelopes: Envelope[];
-  taxReserve: number; // 10% accumulated tax
-  survivalBufferCash: number; // unassigned liquid cash buffer
-  expenseHistory: ExpenseRecord[];
-  paymentReceipts: PaymentReceipt[];
-  giftLogs?: GiftLog[]; // Logged monetary gifts (not allocated to envelopes, tracked as inflow)
-  autoBackupSettings?: AutoBackupSettings;
-  backupSnapshots?: BackupSnapshot[];
-  hideDemoButton?: boolean;
-  theme?: AppTheme;
-  budgetCycleStartDate?: string; // ISO date of active 30-day cycle
-  budgetCycleNumber?: number; // 1, 2, 3...
-  cycleRolloverHistory?: CycleRolloverRecord[];
+  type: 'order_status' | 'draft_ready' | 'message' | 'revision';
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
 }

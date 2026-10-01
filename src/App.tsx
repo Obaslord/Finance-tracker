@@ -588,55 +588,102 @@ export default function App() {
     setState(newState);
   };
 
-  // Automated 30-Day Budget Cycle Rollover: check if 30 days (30 * 24 * 60 * 60 * 1000 ms) have passed
+  // Automated New Month & 30-Day Budget Cycle Rollover:
+  // Automatically triggers whenever:
+  // 1. A new calendar month starts (e.g. today's month differs from active cycle month)
+  // 2. OR 30 full days have elapsed since budgetCycleStartDate
   useEffect(() => {
-    const cycleStartMs = state.budgetCycleStartDate ? new Date(state.budgetCycleStartDate).getTime() : Date.now();
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    // If no budgetCycleStartDate is set, initialize it to the 1st of the current month
+    if (!state.budgetCycleStartDate) {
+      const startOfMonthIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      setState((prev) => ({
+        ...prev,
+        budgetCycleStartDate: startOfMonthIso,
+        budgetCycleNumber: prev.budgetCycleNumber || 1,
+      }));
+      return;
+    }
+
+    const cycleStartDate = new Date(state.budgetCycleStartDate);
+    const cycleMonthKey = `${cycleStartDate.getFullYear()}-${String(cycleStartDate.getMonth() + 1).padStart(2, '0')}`;
+    const cycleStartMs = cycleStartDate.getTime();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-    if (Date.now() - cycleStartMs >= thirtyDaysMs) {
+
+    const isCalendarMonthChanged = currentMonthKey !== cycleMonthKey;
+    const isThirtyDaysElapsed = Date.now() - cycleStartMs >= thirtyDaysMs;
+
+    if (isCalendarMonthChanged || isThirtyDaysElapsed) {
       handleTriggerCycleRollover();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.budgetCycleStartDate]);
 
-  // Handler to sweep unspent envelope balances back to Buffer / Cash-in-Hand and advance cycle
+  // Handler to sweep unspent regular envelope balances back to Buffer / Cash-in-Hand,
+  // preserve long-term savings goals/sinking funds overtime progress, and advance cycle to a fresh month
   const handleTriggerCycleRollover = () => {
     setState((prev) => {
-      const totalUnspentCash = prev.envelopes.reduce((sum, e) => sum + e.currentBalance, 0);
-      const newBufferCash = prev.survivalBufferCash + totalUnspentCash;
-      const nowIso = new Date().toISOString();
+      const now = new Date();
+      const nowIso = now.toISOString();
 
-      const envelopesSwept = prev.envelopes
-        .filter((e) => e.currentBalance > 0)
-        .map((e) => ({
-          envelopeId: e.id,
-          envelopeName: e.name,
-          sweptAmount: e.currentBalance,
-        }));
+      // Rule: Multi-month / long-term savings targets (e.g. Annual Rent Sinking Fund, category savings, savingsGoal up to 1 year)
+      const isLongTermSavings = (e: Envelope) => Boolean(e.savingsGoal) || e.category === 'savings';
+
+      // 1. Only regular envelopes have leftover cash swept into Cash in Hand / Survival Buffer.
+      // Sinking funds / long term savings targets keep their money accumulated inside the envelope!
+      const envelopesToSweep = prev.envelopes.filter((e) => !isLongTermSavings(e) && e.currentBalance > 0);
+      const totalUnspentCash = envelopesToSweep.reduce((sum, e) => sum + e.currentBalance, 0);
+      const newBufferCash = prev.survivalBufferCash + totalUnspentCash;
+
+      const envelopesSwept = envelopesToSweep.map((e) => ({
+        envelopeId: e.id,
+        envelopeName: e.name,
+        sweptAmount: e.currentBalance,
+      }));
 
       const rolloverRecord = {
         id: `rollover_${Date.now()}`,
         cycleNumber: prev.budgetCycleNumber || 1,
-        startDate: prev.budgetCycleStartDate || nowIso,
+        startDate: prev.budgetCycleStartDate || new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
         endDate: nowIso,
         totalSweptToBuffer: totalUnspentCash,
         envelopesSwept,
         date: nowIso,
       };
 
-      // Reset each envelope's currentBalance to 0 and monthlyAllocated to 0 for the fresh month,
-      // while strictly PRESERVING cumulativeAllocated and savingsGoal!
-      const resetEnvelopes = prev.envelopes.map((e) => ({
-        ...e,
-        currentBalance: 0,
-        monthlyAllocated: 0,
-        targetReached: false,
-      }));
+      // 2. Reset envelopes for the new month:
+      // - Regular envelopes go back to ZERO automatically (currentBalance: 0, monthlyAllocated: 0, targetReached: false)
+      // - Sinking funds / long-term savings targets PRESERVE what has been put into them overtime (currentBalance preserved, cumulativeAllocated preserved),
+      //   while their monthly target allocation resets to 0 for the fresh month so the cycle continues!
+      const resetEnvelopes = prev.envelopes.map((e) => {
+        if (isLongTermSavings(e)) {
+          return {
+            ...e,
+            // currentBalance preserved for long term savings/sinking funds!
+            monthlyAllocated: 0,
+            targetReached: false,
+          };
+        } else {
+          return {
+            ...e,
+            currentBalance: 0,
+            monthlyAllocated: 0,
+            cumulativeAllocated: 0,
+            targetReached: false,
+          };
+        }
+      });
+
+      // Align budgetCycleStartDate with the start of the new month (1st of the month)
+      const startOfNewMonthIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
       return {
         ...prev,
         envelopes: resetEnvelopes,
         survivalBufferCash: newBufferCash,
-        budgetCycleStartDate: nowIso,
+        budgetCycleStartDate: startOfNewMonthIso,
         budgetCycleNumber: (prev.budgetCycleNumber || 1) + 1,
         cycleRolloverHistory: [...(prev.cycleRolloverHistory || []), rolloverRecord],
       };

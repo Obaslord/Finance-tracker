@@ -366,6 +366,7 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                     <span className="absolute left-2.5 top-2 text-slate-400 text-xs font-semibold pointer-events-none">₦</span>
                     <input
                       type="number"
+                      step="any"
                       min="0"
                       value={currentAlloc === 0 ? '' : currentAlloc}
                       placeholder="0"

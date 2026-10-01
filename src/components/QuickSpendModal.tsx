@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { Envelope } from '../types';
-import { formatNaira } from '../utils/formatters';
+import { formatNaira, formatCurrencyPreview, QUICK_AMOUNT_PRESETS } from '../utils/formatters';
 
 interface QuickSpendModalProps {
   isOpen: boolean;
@@ -109,22 +109,78 @@ export const QuickSpendModal: React.FC<QuickSpendModalProps> = ({
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           {/* Quick Amount input */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Amount Spent (₦) *
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Amount Spent (₦) *
+              </label>
+              {numericAmount > 0 && (
+                <span className="text-xs font-extrabold text-amber-600 dark:text-amber-400">
+                  {formatCurrencyPreview(numericAmount)}
+                </span>
+              )}
+            </div>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-semibold text-sm">₦</span>
               <input
                 type="number"
                 required
-                min="1"
-                step="100"
+                min="0.01"
+                step="any"
                 placeholder="e.g. 5000"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 autoFocus
                 className="w-full pl-8 pr-3 py-2 text-base font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-slate-100"
               />
+            </div>
+
+            {/* Formatted Currency Feedback Callout */}
+            {numericAmount > 0 && (
+              <div className="mt-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl flex items-center justify-between text-xs transition-all">
+                <span className="font-medium text-slate-600 dark:text-slate-400">
+                  Formatted Value:
+                </span>
+                <span className="font-extrabold text-sm text-amber-700 dark:text-amber-300 tracking-wide">
+                  {formatCurrencyPreview(numericAmount)}
+                </span>
+              </div>
+            )}
+
+            {/* Quick Preset Chips */}
+            <div className="mt-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                  Quick Amount Presets
+                </span>
+                {amount && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount('')}
+                    className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {QUICK_AMOUNT_PRESETS.map((preset) => {
+                  const isSelected = numericAmount === preset;
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setAmount(preset.toString())}
+                      className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all border text-center ${
+                        isSelected
+                          ? 'bg-amber-600 text-white border-amber-700 shadow-xs ring-2 ring-amber-400/40'
+                          : 'bg-slate-50 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-amber-300'
+                      }`}
+                    >
+                      {formatCurrencyPreview(preset)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

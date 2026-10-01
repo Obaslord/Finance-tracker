@@ -266,7 +266,7 @@ export const EnvelopeEditorModal: React.FC<EnvelopeEditorModalProps> = ({
                 <input
                   type="number"
                   min="0"
-                  step="500"
+                  step="any"
                   required
                   placeholder="0"
                   value={monthlyTarget}
@@ -288,7 +288,7 @@ export const EnvelopeEditorModal: React.FC<EnvelopeEditorModalProps> = ({
                 <input
                   type="number"
                   min="0"
-                  step="500"
+                  step="any"
                   placeholder="0"
                   value={currentBalance}
                   onChange={(e) => setCurrentBalance(e.target.value)}

@@ -407,7 +407,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               <input
                                 type="number"
                                 min="0"
-                                step="1000"
+                                step="any"
                                 value={envelope.monthlyTarget}
                                 onChange={(e) => {
                                   const val = parseInt(e.target.value, 10);

@@ -79,7 +79,8 @@ export const TaxAndReceiptsSection: React.FC<TaxAndReceiptsSectionProps> = ({
                 <input
                   type="number"
                   required
-                  min="1"
+                  min="0.01"
+                  step="any"
                   max={taxReserve}
                   placeholder={`Max ${taxReserve}`}
                   value={taxPayAmount}

@@ -23,11 +23,14 @@ export function getCycleExpenses(
   if (!expenses || expenses.length === 0) return [];
   if (budgetCycleStartDate) {
     const cycleStartTs = new Date(budgetCycleStartDate).getTime();
-    return expenses.filter((e) => new Date(e.date).getTime() >= cycleStartTs);
+    if (!isNaN(cycleStartTs)) {
+      return expenses.filter((e) => new Date(e.date).getTime() >= cycleStartTs);
+    }
   }
-  // Default to 30 days
-  const thirtyDaysAgo = Date.now() - 30 * 86400000;
-  return expenses.filter((e) => new Date(e.date).getTime() >= thirtyDaysAgo);
+  // Default to 1st of current calendar month so last month's expenses do not bleed into current month
+  const now = new Date();
+  const startOfCurrentMonthTs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  return expenses.filter((e) => new Date(e.date).getTime() >= startOfCurrentMonthTs);
 }
 
 /**

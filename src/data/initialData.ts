@@ -123,6 +123,8 @@ export const INITIAL_STATE: AppState = {
     autoSaveToDownloads: true,
   },
   backupSnapshots: [],
+  budgetCycleStartDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
+  budgetCycleNumber: 1,
   theme: 'light',
 };
 

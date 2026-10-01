@@ -324,7 +324,7 @@ export const BufferReallocationModal: React.FC<BufferReallocationModalProps> = (
                         <input
                           type="number"
                           min="0"
-                          step="500"
+                          step="any"
                           placeholder="0"
                           value={allocations[env.id] || ''}
                           onChange={(e) => handleAllocationChange(env.id, e.target.value)}
