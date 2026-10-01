@@ -125,6 +125,7 @@ export const INITIAL_STATE: AppState = {
   backupSnapshots: [],
   budgetCycleStartDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
   budgetCycleNumber: 1,
+  lastActiveMonthKey: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
   theme: 'light',
 };
 
@@ -174,11 +175,11 @@ export const SAMPLE_DEMO_STATE: AppState = {
     },
   ],
   envelopes: DEFAULT_ENVELOPES.map((e) => {
-    if (e.id === 'env-rent') return { ...e, currentBalance: 25000, cumulativeAllocated: 25000 };
-    if (e.id === 'env-food') return { ...e, currentBalance: 20000, cumulativeAllocated: 20000 };
-    if (e.id === 'env-loan') return { ...e, currentBalance: 20000, cumulativeAllocated: 20000 };
-    if (e.id === 'env-child') return { ...e, currentBalance: 10000, cumulativeAllocated: 10000 };
-    if (e.id === 'env-data') return { ...e, currentBalance: 6000, cumulativeAllocated: 10000 };
+    if (e.id === 'env-rent') return { ...e, currentBalance: 25000, cumulativeAllocated: 25000, monthlyAllocated: 25000 };
+    if (e.id === 'env-food') return { ...e, currentBalance: 20000, cumulativeAllocated: 20000, monthlyAllocated: 20000 };
+    if (e.id === 'env-loan') return { ...e, currentBalance: 20000, cumulativeAllocated: 20000, monthlyAllocated: 20000 };
+    if (e.id === 'env-child') return { ...e, currentBalance: 10000, cumulativeAllocated: 10000, monthlyAllocated: 10000 };
+    if (e.id === 'env-data') return { ...e, currentBalance: 6000, cumulativeAllocated: 10000, monthlyAllocated: 10000 };
     return e;
   }),
   taxReserve: 9000,

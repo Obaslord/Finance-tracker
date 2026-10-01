@@ -212,7 +212,17 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
     return sum;
   }, [envelopes, cycleExpensesMap]);
 
-  const totalRemainingTargetAcrossEnvelopes = Math.max(0, totalMonthlyTarget - totalFunded);
+  const totalFundedThisCycle = useMemo(() => {
+    return envelopes.reduce((sum, e) => {
+      const isLongTermSavings = Boolean(e.savingsGoal) || e.category === 'savings';
+      const allocated = isLongTermSavings
+        ? (e.monthlyAllocated || 0)
+        : (e.monthlyAllocated !== undefined ? e.monthlyAllocated : e.currentBalance);
+      return sum + Math.min(e.monthlyTarget, allocated);
+    }, 0);
+  }, [envelopes]);
+
+  const totalRemainingTargetAcrossEnvelopes = Math.max(0, totalMonthlyTarget - totalFundedThisCycle);
 
   // Savings Goals aggregated calculation (persists based on total allocated/saved even after spend)
   const envelopesWithGoals = envelopes.filter((e) => !!e.savingsGoal);
@@ -322,7 +332,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Total target: <strong>{formatNaira(totalMonthlyTarget)}</strong> • Distributed: <strong>{formatNaira(totalFunded)}</strong> • Remaining target: <strong className={totalRemainingTargetAcrossEnvelopes > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>{formatNaira(totalRemainingTargetAcrossEnvelopes)}</strong> • Total spent: <strong className="text-rose-600 dark:text-rose-400">{formatNaira(totalSpentAcrossEnvelopes)}</strong>
+            Total Target: <strong>{formatNaira(totalMonthlyTarget)}</strong> • Funded This Month: <strong>{formatNaira(totalFundedThisCycle)}</strong> • Remaining Target: <strong className={totalRemainingTargetAcrossEnvelopes > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>{formatNaira(totalRemainingTargetAcrossEnvelopes)}</strong> • Spent This Month: <strong className="text-rose-600 dark:text-rose-400">{formatNaira(totalSpentAcrossEnvelopes)}</strong>
           </p>
         </div>
 
@@ -553,7 +563,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                 const goal = env.savingsGoal!;
                 const Icon = ICON_MAP[env.iconName] || Wallet;
                 const savedSoFar = getEnvelopeSavedSoFar(env);
-                const amountSpent = spentByEnvelopeMap.get(env.id) || 0;
+                const amountSpent = cycleExpensesMap.get(env.id) || 0;
                 const pct =
                   goal.targetAmount > 0
                     ? Math.min(100, Math.round((savedSoFar / goal.targetAmount) * 100))
@@ -612,7 +622,10 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
                               {formatNaira(savedSoFar)}
                             </p>
                             <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
-                              Cash: {formatNaira(env.currentBalance)} {amountSpent > 0 ? `• ${formatNaira(amountSpent)} spend logged` : ''}
+                              Cash in Fund: {formatNaira(env.currentBalance)} {amountSpent > 0 ? `• ${formatNaira(amountSpent)} spent this month` : '• ₦0 spent this month'}
+                            </span>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
+                              Mo. Target: {formatNaira(env.monthlyTarget)} ({formatNaira(env.monthlyAllocated || 0)} allocated this month)
                             </span>
                           </div>
                           <div className="text-right">
@@ -699,12 +712,16 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
             const Icon = ICON_MAP[envelope.iconName] || Wallet;
             const amountSpent = cycleExpensesMap.get(envelope.id) || 0;
 
+            const isLongTermSavings = Boolean(envelope.savingsGoal) || envelope.category === 'savings';
+
             // Total allocated to this envelope in the current month:
-            // User rule: Once a target is reached for the month, the bar should automatically continually show target reached for that month, irrespective of whether the money has been spent or not.
-            const totalAllocatedThisMonth = Math.max(
-              envelope.monthlyAllocated || 0,
-              envelope.currentBalance + amountSpent
-            );
+            // Sinking funds / long term savings: monthly target allocation starts at 0 for the fresh month so the cycle continues!
+            // Regular envelopes: goes back to zero after new month, reads monthlyAllocated
+            const totalAllocatedThisMonth = isLongTermSavings
+              ? (envelope.monthlyAllocated || 0)
+              : (envelope.monthlyAllocated !== undefined
+                  ? envelope.monthlyAllocated
+                  : Math.max(0, envelope.currentBalance + amountSpent));
 
             const isTargetReached =
               envelope.monthlyTarget > 0 &&

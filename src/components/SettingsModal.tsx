@@ -1,10 +1,12 @@
 import {
   AlertTriangle,
   Check,
+  Clock,
   Download,
   EyeOff,
   Moon,
   Percent,
+  RefreshCw,
   RotateCcw,
   ShieldAlert,
   Sliders,
@@ -29,6 +31,7 @@ interface SettingsModalProps {
   onLoadDemoState: () => void;
   onOpenSurvivalConfig: () => void;
   onOpenExportModal?: (tab?: 'autobackup' | 'localfile' | 'csv' | 'json') => void;
+  onTriggerCycleRollover?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -42,6 +45,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onLoadDemoState,
   onOpenSurvivalConfig,
   onOpenExportModal,
+  onTriggerCycleRollover,
 }) => {
   const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'targets'>('general');
   const [confirmReset, setConfirmReset] = useState(false);
@@ -144,6 +148,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Monthly Rollover & Cycle Advance */}
+            {onTriggerCycleRollover && (
+              <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200/80 dark:border-indigo-900/40 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    <span>Monthly Rollover &amp; Cycle Advance</span>
+                  </h4>
+                  <span className="text-[10px] bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-bold px-2 py-0.5 rounded">
+                    New Month
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Sweeps unspent regular envelope balances to Cash at Hand, resets envelopes and monthly spending back to <strong>₦0</strong>, and preserves sinking funds overtime savings progress (1 year max).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onTriggerCycleRollover();
+                  }}
+                  className="mt-1 flex items-center gap-1.5 py-1.5 px-3 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Start New Month / Complete Cycle</span>
+                </button>
+              </div>
+            )}
 
             {/* Zero Cash Baseline Control */}
             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 rounded-xl space-y-2">

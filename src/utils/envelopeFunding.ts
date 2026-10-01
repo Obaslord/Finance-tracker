@@ -55,10 +55,13 @@ export function calculateEnvelopeFunding(
     .reduce((sum, e) => sum + e.amount, 0);
 
   // Total funds allocated or provided to this envelope in the current cycle:
-  // Can be tracked via explicit envelope.monthlyAllocated,
-  // OR inferred from (current unspent balance + amount spent this cycle).
-  const inferredFunded = Math.max(0, envelope.currentBalance + amountSpentThisCycle);
+  // For long-term savings targets/sinking funds, currentBalance is accumulated multi-month savings
+  // and must NOT be treated as this month's allocation. Their monthly allocation is strictly monthlyAllocated (or amount spent this cycle).
+  const isLongTermSavings = Boolean(envelope.savingsGoal) || envelope.category === 'savings';
   const explicitFunded = envelope.monthlyAllocated !== undefined ? Math.max(0, envelope.monthlyAllocated) : 0;
+  const inferredFunded = isLongTermSavings
+    ? amountSpentThisCycle
+    : Math.max(0, envelope.currentBalance + amountSpentThisCycle);
   const totalFundedThisCycle = Math.max(explicitFunded, inferredFunded);
 
   // If envelope.targetReached is explicitly true, or total funded reached the target:
