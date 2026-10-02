@@ -1,6 +1,6 @@
 {
-  "name": "Obaslord Academic & Research Hub",
-  "description": "Premier academic consultation, thesis and dissertation support, statistical data analysis, and professional academic editing platform.",
+  "name": "Obaslord Finance Tracker",
+  "description": "Personal finance and cash flow tracker for variable per-job income, milestone payouts, envelope budgeting, and tax lock.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
