@@ -37,7 +37,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { SpendingTrendVisualizer } from './components/SpendingTrendVisualizer';
 import { SurvivalConfigModal } from './components/SurvivalConfigModal';
 import { TaxAndReceiptsSection } from './components/TaxAndReceiptsSection';
-import { INITIAL_STATE, SAMPLE_DEMO_STATE } from './data/initialData';
+import { DEFAULT_ENVELOPES, INITIAL_STATE, SAMPLE_DEMO_STATE } from './data/initialData';
 import {
   AppState,
   AppTheme,
@@ -55,6 +55,26 @@ import { checkAndRunWeeklyAutoBackup } from './utils/autoBackup';
 import { formatNaira } from './utils/formatters';
 
 const STORAGE_KEY = 'obaslord_finance_tracker_state_v2';
+const FALLBACK_STORAGE_KEYS = [
+  'obaslord_finance_tracker_state_v2',
+  'obaslord_finance_tracker_state',
+  'obaslord_finance_tracker_state_v1',
+  'finance_tracker_state',
+  'finance_tracker_state_v2',
+  'obaslord_finance_tracker',
+];
+
+// Multi-month / long-term savings targets, sinking funds & goals:
+// Retain all accumulated saved funds, balances, and progress across 30-day cycles and month rollovers!
+export const isLongTermSavingsEnvelope = (e: Envelope): boolean =>
+  Boolean(e.savingsGoal) ||
+  e.category === 'savings' ||
+  e.id === 'env-rent' ||
+  Boolean(e.name && (
+    e.name.toLowerCase().includes('sinking') ||
+    e.name.toLowerCase().includes('savings') ||
+    e.name.toLowerCase().includes('rent')
+  ));
 
 // Helper function to execute clean monthly rollover:
 // - Sweeps leftover unspent cash from regular consumable envelopes into Cash in Hand / Survival Buffer
@@ -65,14 +85,12 @@ export function performNewMonthRollover(prev: AppState): AppState {
   const now = new Date();
   const nowIso = now.toISOString();
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const startOfNewMonthIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-  // Rule: Multi-month / long-term savings targets (e.g. Annual Rent Sinking Fund, category savings, savingsGoal up to 1 year)
-  const isLongTermSavings = (e: Envelope) => Boolean(e.savingsGoal) || e.category === 'savings';
-
-  // 1. Only regular envelopes have leftover cash swept into Cash in Hand / Survival Buffer.
+  // 1. Only regular consumable envelopes have leftover cash swept into Cash in Hand / Survival Buffer.
   // Sinking funds / long term savings targets keep their money accumulated inside the envelope!
-  const envelopesToSweep = (prev.envelopes || []).filter((e) => !isLongTermSavings(e) && (e.currentBalance || 0) > 0);
+  const envelopesToSweep = (prev.envelopes || []).filter(
+    (e) => !isLongTermSavingsEnvelope(e) && (e.currentBalance || 0) > 0
+  );
   const totalUnspentCash = envelopesToSweep.reduce((sum, e) => sum + (e.currentBalance || 0), 0);
   const newBufferCash = (prev.survivalBufferCash || 0) + totalUnspentCash;
 
@@ -97,10 +115,30 @@ export function performNewMonthRollover(prev: AppState): AppState {
   // - Sinking funds / long-term savings targets PRESERVE what has been put into them overtime (currentBalance preserved, cumulativeAllocated preserved),
   //   while their monthly target allocation resets to 0 for the fresh month so the cycle continues!
   const resetEnvelopes = (prev.envelopes || []).map((e) => {
-    if (isLongTermSavings(e)) {
+    if (isLongTermSavingsEnvelope(e)) {
+      // Calculate true all-time accumulated savings from receipts, expenses, and current balances
+      const allTimeReceiptAlloc = (prev.paymentReceipts || []).reduce(
+        (sum, r) => sum + (r.allocatedAmounts?.[e.id] || 0),
+        0
+      );
+      const allTimeSpent = (prev.expenseHistory || [])
+        .filter((exp) => exp.envelopeId === e.id)
+        .reduce((sum, exp) => sum + exp.amount, 0);
+
+      const trueCumulative = Math.max(
+        e.cumulativeAllocated || 0,
+        e.currentBalance || 0,
+        allTimeReceiptAlloc,
+        (e.currentBalance || 0) + allTimeSpent
+      );
+
       return {
         ...e,
         // currentBalance preserved for long term savings/sinking funds!
+        currentBalance: e.currentBalance || 0,
+        // cumulativeAllocated preserved to continue measuring savings progress across cycles
+        cumulativeAllocated: trueCumulative,
+        // monthly target allocation resets to 0 for the fresh 30-day month cycle so the cycle continues!
         monthlyAllocated: 0,
         targetReached: false,
       };
@@ -126,49 +164,140 @@ export function performNewMonthRollover(prev: AppState): AppState {
   };
 }
 
-export default function App() {
-  const [state, setState] = useState<AppState>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (!parsed.theme) {
-          parsed.theme = 'light';
+function loadSavedStateWithMigration(): AppState {
+  try {
+    let rawData: string | null = null;
+
+    // Search across primary and fallback keys to prevent data loss across updates
+    for (const key of FALLBACK_STORAGE_KEYS) {
+      const val = localStorage.getItem(key);
+      if (val) {
+        try {
+          const testParsed = JSON.parse(val);
+          const hasJobs = testParsed.jobs && testParsed.jobs.length > 0;
+          const hasReceipts = testParsed.paymentReceipts && testParsed.paymentReceipts.length > 0;
+          const hasBalances = testParsed.envelopes?.some(
+            (e: Envelope) => (e.currentBalance || 0) > 0 || (e.cumulativeAllocated || 0) > 0
+          );
+          const hasCustomGoals = testParsed.envelopes?.some(
+            (e: Envelope) => e.savingsGoal && (e.id !== 'env-rent' || e.savingsGoal.targetAmount !== 480000)
+          );
+
+          if (hasJobs || hasReceipts || hasBalances || hasCustomGoals || !rawData) {
+            rawData = val;
+            if (hasJobs || hasReceipts || hasBalances || hasCustomGoals) {
+              break;
+            }
+          }
+        } catch {
+          // ignore corrupted entry
         }
-        if (!parsed.giftLogs) {
-          parsed.giftLogs = [];
+      }
+    }
+
+    if (rawData) {
+      const parsed: AppState = JSON.parse(rawData);
+
+      if (!parsed.theme) parsed.theme = 'light';
+      if (!parsed.giftLogs) parsed.giftLogs = [];
+      if (!parsed.autoBackupSettings) {
+        parsed.autoBackupSettings = {
+          enabled: true,
+          frequencyDays: 7,
+          autoSaveToDownloads: true,
+        };
+      }
+      if (!parsed.backupSnapshots) parsed.backupSnapshots = [];
+      if (!parsed.cycleRolloverHistory) parsed.cycleRolloverHistory = [];
+      if (!parsed.expenseHistory) parsed.expenseHistory = [];
+      if (!parsed.paymentReceipts) parsed.paymentReceipts = [];
+      if (!parsed.envelopes || parsed.envelopes.length === 0) {
+        parsed.envelopes = DEFAULT_ENVELOPES;
+      }
+
+      const now = new Date();
+      const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      // SELF-HEALING RECOVERY:
+      // 1. If any savings envelope had its cash mistakenly swept into buffer during past rollover, restore it
+      if (parsed.cycleRolloverHistory && Array.isArray(parsed.cycleRolloverHistory)) {
+        for (const record of parsed.cycleRolloverHistory) {
+          if (record.envelopesSwept && Array.isArray(record.envelopesSwept)) {
+            for (const swept of record.envelopesSwept) {
+              const env = parsed.envelopes.find((e) => e.id === swept.envelopeId);
+              if (env && isLongTermSavingsEnvelope(env) && (swept.sweptAmount || 0) > 0) {
+                if ((env.currentBalance || 0) === 0 && (parsed.survivalBufferCash || 0) >= swept.sweptAmount) {
+                  env.currentBalance = swept.sweptAmount;
+                  parsed.survivalBufferCash = Math.max(0, (parsed.survivalBufferCash || 0) - swept.sweptAmount);
+                }
+                env.cumulativeAllocated = Math.max(
+                  env.cumulativeAllocated || 0,
+                  env.currentBalance || 0,
+                  swept.sweptAmount
+                );
+              }
+            }
+          }
         }
-        if (!parsed.autoBackupSettings) {
-          parsed.autoBackupSettings = {
-            enabled: true,
-            frequencyDays: 7,
-            autoSaveToDownloads: true,
+      }
+
+      // 2. Backfill cumulativeAllocated from payment receipts and spent funds
+      parsed.envelopes = parsed.envelopes.map((env) => {
+        const allTimeReceiptAlloc = (parsed.paymentReceipts || []).reduce(
+          (sum, r) => sum + (r.allocatedAmounts?.[env.id] || 0),
+          0
+        );
+        const allTimeSpent = (parsed.expenseHistory || [])
+          .filter((exp) => exp.envelopeId === env.id)
+          .reduce((sum, exp) => sum + exp.amount, 0);
+
+        if (isLongTermSavingsEnvelope(env)) {
+          const trueCumulative = Math.max(
+            env.cumulativeAllocated || 0,
+            env.currentBalance || 0,
+            allTimeReceiptAlloc,
+            (env.currentBalance || 0) + allTimeSpent
+          );
+          return {
+            ...env,
+            cumulativeAllocated: trueCumulative,
           };
         }
-        if (!parsed.backupSnapshots) {
-          parsed.backupSnapshots = [];
+        return env;
+      });
+
+      // 3. Month key verification:
+      // If lastActiveMonthKey was not set, this is an active ongoing session: DO NOT wipe, simply stamp current month key
+      if (!parsed.lastActiveMonthKey) {
+        parsed.lastActiveMonthKey = currentMonthKey;
+        if (!parsed.budgetCycleStartDate) {
+          parsed.budgetCycleStartDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
         }
-
-        const now = new Date();
-        const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-        // If the saved state belongs to a past month or has not been rolled over yet, execute rollover immediately
-        if (parsed.lastActiveMonthKey !== currentMonthKey) {
-          return performNewMonthRollover(parsed);
-        }
-
         return parsed;
       }
-    } catch (e) {
-      console.error('Failed to parse saved state from local storage', e);
-    }
-    return INITIAL_STATE;
-  });
 
-  // Keep state synced to localStorage
+      // If lastActiveMonthKey belongs to an earlier calendar month, safely execute rollover
+      if (parsed.lastActiveMonthKey !== currentMonthKey) {
+        return performNewMonthRollover(parsed);
+      }
+
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Failed to parse saved state from local storage', e);
+  }
+  return INITIAL_STATE;
+}
+
+export default function App() {
+  const [state, setState] = useState<AppState>(() => loadSavedStateWithMigration());
+
+  // Keep state synced to localStorage across both current and fallback keys
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      const serialized = JSON.stringify(state);
+      localStorage.setItem(STORAGE_KEY, serialized);
+      localStorage.setItem('obaslord_finance_tracker_state', serialized);
     } catch (e) {
       console.error('Failed to persist app state', e);
     }
@@ -489,9 +618,23 @@ export default function App() {
   const handleUpdateSavingsGoal = (envelopeId: string, goal: SavingsGoal | undefined) => {
     setState((prev) => ({
       ...prev,
-      envelopes: prev.envelopes.map((env) =>
-        env.id === envelopeId ? { ...env, savingsGoal: goal } : env
-      ),
+      envelopes: prev.envelopes.map((env) => {
+        if (env.id !== envelopeId) return env;
+        const allTimeReceiptAlloc = (prev.paymentReceipts || []).reduce(
+          (sum, r) => sum + (r.allocatedAmounts?.[env.id] || 0),
+          0
+        );
+        const accumulated = Math.max(
+          env.cumulativeAllocated || 0,
+          env.currentBalance || 0,
+          allTimeReceiptAlloc
+        );
+        return {
+          ...env,
+          savingsGoal: goal,
+          cumulativeAllocated: accumulated,
+        };
+      }),
     }));
   };
 
@@ -501,6 +644,7 @@ export default function App() {
       ...envelopeData,
       id: envelopeData.id || `env-${Date.now()}`,
       currentBalance: envelopeData.currentBalance || 0,
+      cumulativeAllocated: envelopeData.cumulativeAllocated || envelopeData.currentBalance || 0,
     };
     setState((prev) => ({
       ...prev,
@@ -512,7 +656,26 @@ export default function App() {
   const handleUpdateEnvelope = (updatedEnvelope: Envelope) => {
     setState((prev) => ({
       ...prev,
-      envelopes: prev.envelopes.map((e) => (e.id === updatedEnvelope.id ? updatedEnvelope : e)),
+      envelopes: prev.envelopes.map((e) => {
+        if (e.id !== updatedEnvelope.id) return e;
+        return {
+          ...e,
+          ...updatedEnvelope,
+          cumulativeAllocated: Math.max(
+            e.cumulativeAllocated || 0,
+            updatedEnvelope.cumulativeAllocated || 0,
+            updatedEnvelope.currentBalance || 0
+          ),
+          monthlyAllocated:
+            updatedEnvelope.monthlyAllocated !== undefined
+              ? updatedEnvelope.monthlyAllocated
+              : e.monthlyAllocated,
+          targetReached:
+            updatedEnvelope.targetReached !== undefined
+              ? updatedEnvelope.targetReached
+              : e.targetReached,
+        };
+      }),
     }));
   };
 
@@ -676,7 +839,16 @@ export default function App() {
     const now = new Date();
     const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    if (!state.lastActiveMonthKey || state.lastActiveMonthKey !== currentMonthKey) {
+    if (!state.lastActiveMonthKey) {
+      setState((prev) => ({
+        ...prev,
+        lastActiveMonthKey: currentMonthKey,
+        budgetCycleStartDate: prev.budgetCycleStartDate || new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
+      }));
+      return;
+    }
+
+    if (state.lastActiveMonthKey !== currentMonthKey) {
       handleTriggerCycleRollover();
       return;
     }
@@ -1071,6 +1243,7 @@ export default function App() {
                   survivalBufferCash={state.survivalBufferCash}
                   expenseHistory={state.expenseHistory}
                   paymentReceipts={state.paymentReceipts}
+                  cycleRolloverHistory={state.cycleRolloverHistory}
                   budgetCycleStartDate={state.budgetCycleStartDate}
                   budgetCycleNumber={state.budgetCycleNumber || 1}
                   onTriggerCycleRollover={handleTriggerCycleRollover}
@@ -1131,6 +1304,7 @@ export default function App() {
             survivalBufferCash={state.survivalBufferCash}
             expenseHistory={state.expenseHistory}
             paymentReceipts={state.paymentReceipts}
+            cycleRolloverHistory={state.cycleRolloverHistory}
             budgetCycleStartDate={state.budgetCycleStartDate}
             budgetCycleNumber={state.budgetCycleNumber || 1}
             onTriggerCycleRollover={handleTriggerCycleRollover}

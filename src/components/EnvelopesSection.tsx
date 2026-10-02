@@ -36,7 +36,7 @@ import {
   Zap,
 } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
-import { Envelope, ExpenseRecord, PaymentReceipt, SavingsGoal } from '../types';
+import { Envelope, ExpenseRecord, PaymentReceipt, SavingsGoal, CycleRolloverRecord } from '../types';
 import { exportEnvelopesToCsv } from '../utils/exportData';
 import { formatNaira, formatPercent } from '../utils/formatters';
 import { EnvelopeEditorModal } from './EnvelopeEditorModal';
@@ -63,6 +63,7 @@ export interface EnvelopesSectionProps {
   survivalBufferCash: number;
   expenseHistory?: ExpenseRecord[];
   paymentReceipts?: PaymentReceipt[];
+  cycleRolloverHistory?: CycleRolloverRecord[];
   budgetCycleStartDate?: string;
   budgetCycleNumber?: number;
   onTriggerCycleRollover?: () => void;
@@ -82,6 +83,7 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
   survivalBufferCash,
   expenseHistory = [],
   paymentReceipts = [],
+  cycleRolloverHistory = [],
   budgetCycleStartDate,
   budgetCycleNumber = 1,
   onTriggerCycleRollover,
@@ -191,16 +193,47 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
     return map;
   }, [paymentReceipts]);
 
+  // Aggregated swept cash in previous cycle rollovers per envelope
+  const sweptFromEnvelopeMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!cycleRolloverHistory) return map;
+    for (const record of cycleRolloverHistory) {
+      if (record.envelopesSwept) {
+        for (const swept of record.envelopesSwept) {
+          map.set(swept.envelopeId, (map.get(swept.envelopeId) || 0) + (swept.sweptAmount || 0));
+        }
+      }
+    }
+    return map;
+  }, [cycleRolloverHistory]);
+
   // Helper function to calculate total funds allocated/saved to an envelope.
-  // Rule: Only savings targets that are over a month or long term should show progress of what has been put in over time (1 year max).
-  // Regular envelopes go back to zero after a new month and the cycle continues.
+  // Rule: Savings targets, long-term savings, and sinking funds MUST retain their progress measuring
+  // across 30-day budget cycles and month rollovers even when regular consumable envelopes reset to 0.
   const getEnvelopeSavedSoFar = (env: Envelope) => {
-    const isLongTermSavings = Boolean(env.savingsGoal) || env.category === 'savings';
+    const isLongTermSavings =
+      Boolean(env.savingsGoal) ||
+      env.category === 'savings' ||
+      env.id === 'env-rent' ||
+      env.name.toLowerCase().includes('sinking') ||
+      env.name.toLowerCase().includes('savings') ||
+      env.name.toLowerCase().includes('rent');
+
     if (!isLongTermSavings) {
       return env.currentBalance;
     }
     const goalTarget = env.savingsGoal?.targetAmount || 0;
-    const accumulated = Math.max(env.currentBalance, env.cumulativeAllocated || 0);
+    const allTimeReceiptAlloc = receiptAllocationsMap.get(env.id) || 0;
+    const allTimeSpent = spentByEnvelopeMap.get(env.id) || 0;
+    const allTimeSwept = sweptFromEnvelopeMap.get(env.id) || 0;
+
+    const accumulated = Math.max(
+      env.cumulativeAllocated || 0,
+      env.currentBalance || 0,
+      allTimeReceiptAlloc,
+      (env.currentBalance || 0) + allTimeSpent,
+      (env.currentBalance || 0) + allTimeSwept
+    );
     return goalTarget > 0 ? Math.min(goalTarget, accumulated) : accumulated;
   };
 
@@ -214,7 +247,13 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
 
   const totalFundedThisCycle = useMemo(() => {
     return envelopes.reduce((sum, e) => {
-      const isLongTermSavings = Boolean(e.savingsGoal) || e.category === 'savings';
+      const isLongTermSavings =
+        Boolean(e.savingsGoal) ||
+        e.category === 'savings' ||
+        e.id === 'env-rent' ||
+        e.name.toLowerCase().includes('sinking') ||
+        e.name.toLowerCase().includes('savings') ||
+        e.name.toLowerCase().includes('rent');
       const allocated = isLongTermSavings
         ? (e.monthlyAllocated || 0)
         : (e.monthlyAllocated !== undefined ? e.monthlyAllocated : e.currentBalance);
@@ -712,7 +751,13 @@ export const EnvelopesSection: React.FC<EnvelopesSectionProps> = ({
             const Icon = ICON_MAP[envelope.iconName] || Wallet;
             const amountSpent = cycleExpensesMap.get(envelope.id) || 0;
 
-            const isLongTermSavings = Boolean(envelope.savingsGoal) || envelope.category === 'savings';
+            const isLongTermSavings =
+              Boolean(envelope.savingsGoal) ||
+              envelope.category === 'savings' ||
+              envelope.id === 'env-rent' ||
+              envelope.name.toLowerCase().includes('sinking') ||
+              envelope.name.toLowerCase().includes('savings') ||
+              envelope.name.toLowerCase().includes('rent');
 
             // Total allocated to this envelope in the current month:
             // Sinking funds / long term savings: monthly target allocation starts at 0 for the fresh month so the cycle continues!

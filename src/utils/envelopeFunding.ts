@@ -57,7 +57,13 @@ export function calculateEnvelopeFunding(
   // Total funds allocated or provided to this envelope in the current cycle:
   // For long-term savings targets/sinking funds, currentBalance is accumulated multi-month savings
   // and must NOT be treated as this month's allocation. Their monthly allocation is strictly monthlyAllocated (or amount spent this cycle).
-  const isLongTermSavings = Boolean(envelope.savingsGoal) || envelope.category === 'savings';
+  const isLongTermSavings =
+    Boolean(envelope.savingsGoal) ||
+    envelope.category === 'savings' ||
+    envelope.id === 'env-rent' ||
+    envelope.name.toLowerCase().includes('sinking') ||
+    envelope.name.toLowerCase().includes('savings') ||
+    envelope.name.toLowerCase().includes('rent');
   const explicitFunded = envelope.monthlyAllocated !== undefined ? Math.max(0, envelope.monthlyAllocated) : 0;
   const inferredFunded = isLongTermSavings
     ? amountSpentThisCycle

@@ -337,7 +337,7 @@ export const PaymentDistributorModal: React.FC<PaymentDistributorModalProps> = (
                       <>
                         <span>•</span>
                         <span className="text-blue-600 dark:text-blue-400">
-                          Goal: {formatPercent(Math.min(100, Math.round(((env.currentBalance + currentAlloc) / env.savingsGoal.targetAmount) * 100)))}
+                          Goal: {formatPercent(Math.min(100, Math.round(((Math.max(env.cumulativeAllocated || 0, env.currentBalance || 0) + currentAlloc) / env.savingsGoal.targetAmount) * 100)))}
                         </span>
                       </>
                     )}

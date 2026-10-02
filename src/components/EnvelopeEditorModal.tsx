@@ -179,6 +179,9 @@ export const EnvelopeEditorModal: React.FC<EnvelopeEditorModalProps> = ({
       iconName,
       color,
       savingsGoal: envelopeToEdit?.savingsGoal,
+      cumulativeAllocated: envelopeToEdit?.cumulativeAllocated,
+      monthlyAllocated: envelopeToEdit?.monthlyAllocated,
+      targetReached: envelopeToEdit?.targetReached,
     });
 
     onClose();
